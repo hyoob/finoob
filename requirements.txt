@@ -1,0 +1,2 @@
+# requirements.txt
+google-cloud-bigquery==3.35.1

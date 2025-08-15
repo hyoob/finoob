@@ -7,3 +7,6 @@ __pycache__/
 
 # Streamlit cache
 .streamlit/
+
+# Google Cloud credentials
+finoob-3e6282c0d80c.json
