@@ -1,15 +1,15 @@
 {
   "Groceries": [
-    "Supervalue"
+    { "keyword": "supervalue", "label": "SuperValu" }
   ],
-  "Dairy": [
-    "milk",
-    "cheese",
-    "yogurt",
-    "butter",
-    "cream"
+  "Utilities": [
+    { "keyword": "CT EIR", "label": "Eir" },
+    { "keyword": "Electric Ireland", "label": "Electric Ireland" }
   ],
   "Travel": [
-    "lastminuteco "
+    { "keyword": "lastminuteco", "label": "Last Minute Co" }
+  ],
+  "Furniture / Appliances": [
+    { "keyword": " MADDENS ", "label": "Maddens Hardware shop" }
   ]
 }

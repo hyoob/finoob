@@ -11,13 +11,16 @@ credentials = service_account.Credentials.from_service_account_info(
 )
 client = bigquery.Client(credentials=credentials)
 
+# Set BigQuery table ID
+table_id = "finoob.bank_transactions.sample_transactions"
+
 # Load categories from JSON file.
 with open("categories.json", "r") as f:
     categories = json.load(f)
 
-# Perform query.
+# Perform BQ query.
 # Uses st.cache_data to only rerun when the query changes or after 10 min.
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=1)
 def run_query(query):
     query_job = client.query(query)
     rows_raw = query_job.result()
@@ -26,7 +29,6 @@ def run_query(query):
     return rows
 
 rows = run_query("SELECT * FROM `finoob.bank_transactions.sample_transactions` WHERE account = 'PTSB Checking HB' ORDER BY date DESC LIMIT 1")
-# st.write(rows)
 
 # Extract the latest transaction row from BigQuery
 if rows:
@@ -36,6 +38,7 @@ else:
     latest_bq_tx = None
     latest_bq_date = None
 
+# Streamlit app title
 st.title("🚀 Finoob")
 
 # File uploader
@@ -48,43 +51,42 @@ if uploaded_file is not None:
 
     st.success("File uploaded successfully!")
 
-    # st.write("📄 Uploaded Transactions:")
-    # st.dataframe(df.head())
-
     if latest_bq_tx:
-        # Ensure consistency with BQ row
+        # Define values for latest transaction in BigQuery
         bq_description = latest_bq_tx["description"]
-        # st.write(bq_description)
         bq_debit = float(latest_bq_tx.get("debit", 0))
-        # st.write(bq_debit)
         bq_credit = float(latest_bq_tx.get("credit", 0))
 
         # Normalize dataframe columns
         df["date"] = pd.to_datetime(df["Date"],format="%d/%m/%Y", errors="coerce")
         df["debit"] = pd.to_numeric(df["Money Out (€)"], errors="coerce").fillna(0)
         df["credit"] = pd.to_numeric(df["Money In (€)"], errors="coerce").fillna(0)
+        df["description"] = pd.Series(df["Description"], dtype="string").str.strip()
 
-        # Drop unnecessary columns (they give pyarrow errors)
-        df = df.drop(columns=["Money Out (€)", "Money In (€)"])
+
+        # Drop unnecessary columns (some give pyarrow errors due to mixed types)
+        df = df.drop(columns=["Money Out (€)", "Money In (€)", "Date", "Description"])
 
         # Sort oldest → newest by date (and by index as a tiebreaker)
         df = df.sort_values(by="date", ascending=True).reset_index(drop=True)
 
-        # Categorize transactions ---
+        # Categorize transactions based on matching rules
         def categorize(description):
             desc = str(description).lower()
-            for cat, keywords in categories.items():
-                # convert each keyword to lowercase for matching
-                if any(keyword.lower() in desc for keyword in keywords):
-                    return cat
-            return "Other"
+            for cat, items in categories.items():
+                for item in items:
+                    keyword = item["keyword"].lower().strip()
+                    label = item["label"]
+                    if keyword in desc:
+                        return pd.Series([cat, label])
+            return pd.Series(["", ""])
 
-        df["category"] = df["Description"].apply(categorize)
+        df[["category", "label"]] = df["description"].apply(categorize)
 
-        # Find the marker row in CSV
+        # Find the marker row in uploaded CSV
         mask = (
             (df["date"] == latest_bq_date) &
-            (df["Description"] == bq_description) &
+            (df["description"] == bq_description) &
             (df["debit"] == bq_debit) &
             (df["credit"] == bq_credit)
         )
@@ -92,6 +94,8 @@ if uploaded_file is not None:
         if mask.any():
             marker_index = df[mask].index.max()  # last matching row
             new_transactions = df.loc[marker_index+1:].copy()
+            # Keep only the required columns
+            new_transactions = new_transactions[["date", "debit", "credit", "description", "category", "label"]]
         else:
             # If not found, assume all CSV rows are new
             st.warning("⚠️ Could not find the last BQ transaction in the CSV. Keeping all rows.")
@@ -99,22 +103,52 @@ if uploaded_file is not None:
 
         st.write(f"Transactions newer than the last BQ transaction ({latest_bq_date.date()}):")
         
+        # Create a list of category options from the categories JSON
         category_options = list(categories.keys())
 
+        # Display the new transactions in a data editor
         edited_df = st.data_editor(
             new_transactions,
             column_config={
+                "date": st.column_config.DateColumn(
+                    "date",
+                    format="YYYY-MM-DD"
+                ),
                 "category": st.column_config.SelectboxColumn(
-                    "App Category",
+                    "category",
                     help="The category of the app",
                     width="medium",
                     options=category_options,
                     required=True,
-                )
+                ),
+                "label": st.column_config.TextColumn(
+                    "label",
+                    help="The subcategory (e.g. clean label for the keyword)",
+                    required=True,
+                ),
             },
             hide_index=True,
         )
-        # st.dataframe(new_transactions)
+
+        if not edited_df.empty:
+            if st.button("💾 Save new transactions to BigQuery"):
+                # Ensure date column is datetime.date
+                edited_df["date"] = pd.to_datetime(edited_df["date"]).dt.date
+                
+                # Add derived fields expected in BQ table
+                edited_df["account"] = "PTSB Checking HB"
+                edited_df["year"] = pd.to_datetime(edited_df["date"]).dt.year
+                edited_df["month"] = pd.to_datetime(edited_df["date"]).dt.to_period("M").astype(str)
+                edited_df["transaction_type"] = np.where(edited_df["debit"] < 0, "Debit",
+                                np.where(edited_df["credit"] > 0, "Credit", "Unknown"))
+
+                # Load into BigQuery
+                job_config = bigquery.LoadJobConfig(write_disposition="WRITE_APPEND")
+                job = client.load_table_from_dataframe(edited_df, table_id, job_config=job_config)
+                job.result()
+
+                st.success(f"🎉 Successfully inserted {len(edited_df)} rows into BigQuery")
+
 
         if new_transactions.empty:
             st.info("No new transactions found.")
@@ -123,11 +157,6 @@ if uploaded_file is not None:
     else:
         st.warning("No transactions found in BigQuery. Keeping all CSV rows.")
         new_transactions = df
-
-# st.write("BQ Latest Transaction:")
-# st.write(rows)
-# for row in rows:
-#     st.write("✍️ " + row['description'])
 
 # Sidebar
 st.sidebar.header("Controls")
