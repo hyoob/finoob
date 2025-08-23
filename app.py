@@ -4,6 +4,7 @@ import numpy as np
 import json
 from google.oauth2 import service_account
 from google.cloud import bigquery
+from datetime import datetime, timezone
 
 # Create API client.
 credentials = service_account.Credentials.from_service_account_info(
@@ -28,16 +29,6 @@ def run_query(query):
     rows = [dict(row) for row in rows_raw]
     return rows
 
-rows = run_query("SELECT * FROM `finoob.bank_transactions.sample_transactions` WHERE account = 'PTSB Checking HB' ORDER BY date DESC LIMIT 1")
-
-# Extract the latest transaction row from BigQuery
-if rows:
-    latest_bq_tx = rows[0]  # dict with fields from BQ
-    latest_bq_date = pd.to_datetime(latest_bq_tx["date"])
-else:
-    latest_bq_tx = None
-    latest_bq_date = None
-
 # Streamlit app title
 st.title("🚀 Finoob")
 
@@ -50,6 +41,40 @@ if uploaded_file is not None:
     df = pd.read_excel(uploaded_file, header=12, skipfooter=1)   
 
     st.success("File uploaded successfully!")
+
+    # 🔹 Ask the user which account these transactions belong to
+    account_options = [
+        "-- Select an account --",
+        "PTSB Checking HB",
+        "PTSB Savings HB",
+        "Bank of America Credit",
+        "Bank of America Checking",
+        "AIB Savings",
+    ]
+
+    account = st.selectbox("Select the account for this file:", account_options)
+
+    # Prevent continuing unless user has selected a real account
+    if account == "-- Select an account --":
+        st.warning("⚠️ Please select an account to continue.")
+        st.stop()
+
+    # Query the latest transaction from BigQuery for this account
+    rows = run_query(f"""
+        SELECT *
+        FROM `{table_id}`
+        WHERE account = '{account}'
+        ORDER BY transaction_number DESC, date DESC
+        LIMIT 1
+    """)
+
+    if rows:
+        latest_bq_tx = rows[0]  # dict with fields from BQ
+        latest_bq_date = pd.to_datetime(latest_bq_tx["date"])
+    else:
+        latest_bq_tx = None
+        latest_bq_date = None
+
 
     if latest_bq_tx:
         # Define values for latest transaction in BigQuery
@@ -136,11 +161,28 @@ if uploaded_file is not None:
                 edited_df["date"] = pd.to_datetime(edited_df["date"]).dt.date
                 
                 # Add derived fields expected in BQ table
-                edited_df["account"] = "PTSB Checking HB"
+                edited_df["account"] = account
                 edited_df["year"] = pd.to_datetime(edited_df["date"]).dt.year
                 edited_df["month"] = pd.to_datetime(edited_df["date"]).dt.to_period("M").astype(str)
                 edited_df["transaction_type"] = np.where(edited_df["debit"] < 0, "Debit",
                                 np.where(edited_df["credit"] > 0, "Credit", "Unknown"))
+                edited_df["ingestion_timestamp"] = datetime.now(timezone.utc)
+
+                # 🔹 Ensure transactions are sorted chronologically
+                edited_df = edited_df.sort_values(by="date", ascending=True).reset_index(drop=True)
+
+                # 🔹 Get current max transaction_number for the account
+                query = f"""
+                    SELECT MAX(transaction_number) as max_num
+                    FROM `{table_id}`
+                    WHERE account = '{account}'
+                """
+                result = client.query(query).result()
+                row = list(result)[0]
+                start_num = row["max_num"] if row["max_num"] is not None else 0
+
+                # 🔹 Assign new transaction numbers sequentially
+                edited_df["transaction_number"] = range(start_num + 1, start_num + 1 + len(edited_df))
 
                 # Load into BigQuery
                 job_config = bigquery.LoadJobConfig(write_disposition="WRITE_APPEND")
