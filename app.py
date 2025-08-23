@@ -29,6 +29,16 @@ def run_query(query):
     rows = [dict(row) for row in rows_raw]
     return rows
 
+def classify_transaction(row):
+    if row["debit"] != 0 and row["credit"] == 0:
+        return "Debit"
+    elif row["credit"] != 0 and row["debit"] == 0:
+        return "Credit"
+    elif row["debit"] != 0 and row["credit"] != 0:
+        return "Error"  # or "Mixed", depending on how you want to flag this
+    else:
+        return "Unknown"
+
 # Streamlit app title
 st.title("🚀 Finoob")
 
@@ -81,12 +91,24 @@ if uploaded_file is not None:
         bq_description = latest_bq_tx["description"]
         bq_debit = float(latest_bq_tx.get("debit", 0))
         bq_credit = float(latest_bq_tx.get("credit", 0))
+        bq_balance = float(latest_bq_tx.get("balance") or 0.0) # default to 0.0 if None
 
         # Normalize dataframe columns
         df["date"] = pd.to_datetime(df["Date"],format="%d/%m/%Y", errors="coerce")
-        df["debit"] = pd.to_numeric(df["Money Out (€)"], errors="coerce").fillna(0)
+        df["debit"] = pd.to_numeric(df["Money Out (€)"], errors="coerce").fillna(0).abs()
         df["credit"] = pd.to_numeric(df["Money In (€)"], errors="coerce").fillna(0)
         df["description"] = pd.Series(df["Description"], dtype="string").str.strip()
+
+        if "Balance (€)" in df.columns:
+            # If CSV has balance → use it
+            df["balance"] = pd.to_numeric(df["Balance (€)"], errors="coerce")
+        else:
+            # If CSV does NOT have balance → compute it
+            # Start from last balance in BQ, or 0 if none
+            start_balance = bq_balance if bq_balance is not None else 0.0
+
+            # Compute balance cumulatively
+            df["balance"] = start_balance + (df["credit"] - df["debit"]).cumsum()
 
 
         # Drop unnecessary columns (some give pyarrow errors due to mixed types)
@@ -120,7 +142,15 @@ if uploaded_file is not None:
             marker_index = df[mask].index.max()  # last matching row
             new_transactions = df.loc[marker_index+1:].copy()
             # Keep only the required columns
-            new_transactions = new_transactions[["date", "debit", "credit", "description", "category", "label"]]
+            new_transactions = new_transactions[[
+                "date",
+                "debit",
+                "credit",
+                "description",
+                "category",
+                "label",
+                "balance"
+            ]]
         else:
             # If not found, assume all CSV rows are new
             st.warning("⚠️ Could not find the last BQ transaction in the CSV. Keeping all rows.")
@@ -164,14 +194,13 @@ if uploaded_file is not None:
                 edited_df["account"] = account
                 edited_df["year"] = pd.to_datetime(edited_df["date"]).dt.year
                 edited_df["month"] = pd.to_datetime(edited_df["date"]).dt.to_period("M").astype(str)
-                edited_df["transaction_type"] = np.where(edited_df["debit"] < 0, "Debit",
-                                np.where(edited_df["credit"] > 0, "Credit", "Unknown"))
+                edited_df["transaction_type"] = edited_df.apply(classify_transaction, axis=1)
                 edited_df["ingestion_timestamp"] = datetime.now(timezone.utc)
 
-                # 🔹 Ensure transactions are sorted chronologically
+                # Ensure transactions are sorted chronologically
                 edited_df = edited_df.sort_values(by="date", ascending=True).reset_index(drop=True)
 
-                # 🔹 Get current max transaction_number for the account
+                # Get current max transaction_number for the account
                 query = f"""
                     SELECT MAX(transaction_number) as max_num
                     FROM `{table_id}`
