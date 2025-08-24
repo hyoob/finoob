@@ -1,0 +1,12 @@
+{
+  "CMB Checking": "cmb",
+  "CMB Savings": "cmb",
+  "PTSB Checking HB": "ptsb",
+  "PTSB Savings HB": "ptsb",
+  "PTSB Checking Jula": "ptsb",
+  "PTSB Savings Jula": "ptsb",
+  "Revolut": "revolut",
+  "Revolut Jula": "revolut",
+  "USbank Checking": "usbank",
+  "USbank Credit Card": "usbank"
+}

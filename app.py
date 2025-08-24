@@ -6,21 +6,19 @@ from google.oauth2 import service_account
 from google.cloud import bigquery
 from datetime import datetime, timezone
 
-# Create API client.
-credentials = service_account.Credentials.from_service_account_info(
-    st.secrets["gcp_service_account"]
-)
-client = bigquery.Client(credentials=credentials)
-
-# Set BigQuery table ID
-table_id = "finoob.bank_transactions.sample_transactions"
-
 # Load categories from JSON file.
 with open("categories.json", "r") as f:
     categories = json.load(f)
 
-# Perform BQ query.
-# Uses st.cache_data to only rerun when the query changes or after 10 min.
+# --- Load account → bank mapping ---
+with open("accounts.json") as f:
+    account_map = json.load(f)
+
+# Set BigQuery table ID
+table_id = "finoob.bank_transactions.sample_transactions"
+
+# Helper BQ query function
+# Uses st.cache_data to only rerun when the query changes or after x min.
 @st.cache_data(ttl=1)
 def run_query(query):
     query_job = client.query(query)
@@ -29,6 +27,7 @@ def run_query(query):
     rows = [dict(row) for row in rows_raw]
     return rows
 
+# Function to classify transaction type
 def classify_transaction(row):
     if row["debit"] != 0 and row["credit"] == 0:
         return "Debit"
@@ -39,35 +38,114 @@ def classify_transaction(row):
     else:
         return "Unknown"
 
+# --- Normalizers for each account type ---
+def normalize_ptsb(df, bq_balance=None):
+    df["date"] = pd.to_datetime(df["Date"],format="%d/%m/%Y", errors="coerce")
+    df["debit"] = pd.to_numeric(df["Money Out (€)"], errors="coerce").fillna(0).abs()
+    df["credit"] = pd.to_numeric(df["Money In (€)"], errors="coerce").fillna(0)
+    df["description"] = pd.Series(df["Description"], dtype="string").str.strip()
+
+    # Account includes balance in CSV → use it
+    df["balance"] = pd.to_numeric(df["Balance (€)"], errors="coerce")
+
+    # Drop unnecessary columns (some give pyarrow errors due to mixed types)
+    df = df.drop(columns=["Money Out (€)", "Money In (€)", "Date", "Description"])
+
+    return df[["date", "debit", "credit", "description", "balance"]]
+
+def normalize_revolut(df, bq_balance=None):
+    df["date"] = pd.to_datetime(df["Date operation"],format="%d/%m/%Y", errors="coerce")
+    df["debit"] = pd.to_numeric(df["Debit"], errors="coerce").fillna(0).abs()
+    df["credit"] = pd.to_numeric(df["Credit"], errors="coerce").fillna(0)
+    df["description"] = pd.Series(df["Libelle"], dtype="string").str.strip()
+
+    # Account includes balance in CSV → use it
+    df["balance"] = pd.to_numeric(df["Balance (€)"], errors="coerce")
+
+    return df[["date", "debit", "credit", "description", "balance"]]
+
+def normalize_cmb(df, bq_balance):
+    df["date"] = pd.to_datetime(df["Date operation"],format="%d/%m/%Y", errors="coerce")
+    df["debit"] = pd.to_numeric(df["Debit"], errors="coerce").fillna(0).abs()
+    df["credit"] = pd.to_numeric(df["Credit"], errors="coerce").fillna(0)
+    df["description"] = pd.Series(df["Libelle"], dtype="string").str.strip()
+
+    # Account has no balance in CSV → calculate balance
+    start_balance = bq_balance if bq_balance is not None else 0.0
+    df["balance"] = start_balance + (df["credit"] - df["debit"]).cumsum()
+
+    return df[["date", "debit", "credit", "description", "balance"]]
+
+def normalize_usbank(df, bq_balance):
+    df["date"] = pd.to_datetime(df["Date"],format="%d/%m/%Y", errors="coerce")
+    df["debit"] = pd.to_numeric(df["Money Out (€)"], errors="coerce").fillna(0).abs()
+    df["credit"] = pd.to_numeric(df["Money In (€)"], errors="coerce").fillna(0)
+    df["description"] = pd.Series(df["Description"], dtype="string").str.strip()
+
+    # Account has no balance in CSV → calculate balance
+    start_balance = bq_balance if bq_balance is not None else 0.0
+    df["balance"] = start_balance + (df["credit"] - df["debit"]).cumsum()
+
+    return df[["date", "debit", "credit", "description", "balance"]]
+
+# Bank → bank handler mapping ---
+bank_handlers = {
+    "ptsb": {
+        "reader": pd.read_excel,
+        "reader_kwargs": {"header": 12, "skipfooter": 1},
+        "normalizer": normalize_ptsb,
+    },
+    "revolut": {
+        "reader": pd.read_csv,
+        "reader_kwargs": {"sep": ",", "decimal": ".", "header": 0},
+        "normalizer": normalize_revolut,
+    },
+    "usbank": {
+        "reader": pd.read_csv,
+        "reader_kwargs": {"sep": ",", "decimal": ".", "header": 0},
+        "normalizer": normalize_usbank,
+    },
+    "cmb": {
+        "reader": pd.read_csv,
+        "reader_kwargs": {"sep": ";", "decimal": ","},
+        "normalizer": normalize_cmb,
+    },
+}
+
+# Account → bank handler mapping
+account_handlers = {acc: bank_handlers[bank] for acc, bank in account_map.items()}
+
+# Create API client.
+credentials = service_account.Credentials.from_service_account_info(
+    st.secrets["gcp_service_account"]
+)
+client = bigquery.Client(credentials=credentials)
+
 # Streamlit app title
 st.title("🚀 Finoob")
+
+# Ask the user which account the uploaded file is for
+account_options = ["-- Select an account --"] + list(account_map.keys())    
+
+account = st.selectbox("Select the account for the file you want to upload:", account_options)
+
+# Prevent continuing unless user has selected a real account
+if account == "-- Select an account --":
+    st.warning("⚠️ Please select an account to continue.")
+    st.stop()
 
 # File uploader
 uploaded_file = st.file_uploader("Choose a CSV file", type=["csv","xls"])
 
 if uploaded_file is not None:
-    # Read CSV into DataFrame 
-    # header=12 skips the first 12 rows, skipfooter=1 skips the last row
-    df = pd.read_excel(uploaded_file, header=12, skipfooter=1)   
+    # Detect file type by extension
+    bank = account_map[account] 
+    handler = bank_handlers[bank]
+
+    # Read the file with the correct function & args
+    df = handler["reader"](uploaded_file, **handler["reader_kwargs"])
 
     st.success("File uploaded successfully!")
-
-    # 🔹 Ask the user which account these transactions belong to
-    account_options = [
-        "-- Select an account --",
-        "PTSB Checking HB",
-        "PTSB Savings HB",
-        "Bank of America Credit",
-        "Bank of America Checking",
-        "AIB Savings",
-    ]
-
-    account = st.selectbox("Select the account for this file:", account_options)
-
-    # Prevent continuing unless user has selected a real account
-    if account == "-- Select an account --":
-        st.warning("⚠️ Please select an account to continue.")
-        st.stop()
 
     # Query the latest transaction from BigQuery for this account
     rows = run_query(f"""
@@ -92,29 +170,11 @@ if uploaded_file is not None:
         bq_debit = float(latest_bq_tx.get("debit", 0))
         bq_credit = float(latest_bq_tx.get("credit", 0))
         bq_balance = float(latest_bq_tx.get("balance") or 0.0) # default to 0.0 if None
+    
+        # Apply normalizer to uploaded dataframe
+        df = handler["normalizer"](df, bq_balance=bq_balance)
 
-        # Normalize dataframe columns
-        df["date"] = pd.to_datetime(df["Date"],format="%d/%m/%Y", errors="coerce")
-        df["debit"] = pd.to_numeric(df["Money Out (€)"], errors="coerce").fillna(0).abs()
-        df["credit"] = pd.to_numeric(df["Money In (€)"], errors="coerce").fillna(0)
-        df["description"] = pd.Series(df["Description"], dtype="string").str.strip()
-
-        if "Balance (€)" in df.columns:
-            # If CSV has balance → use it
-            df["balance"] = pd.to_numeric(df["Balance (€)"], errors="coerce")
-        else:
-            # If CSV does NOT have balance → compute it
-            # Start from last balance in BQ, or 0 if none
-            start_balance = bq_balance if bq_balance is not None else 0.0
-
-            # Compute balance cumulatively
-            df["balance"] = start_balance + (df["credit"] - df["debit"]).cumsum()
-
-
-        # Drop unnecessary columns (some give pyarrow errors due to mixed types)
-        df = df.drop(columns=["Money Out (€)", "Money In (€)", "Date", "Description"])
-
-        # Sort oldest → newest by date (and by index as a tiebreaker)
+        # Sort oldest → newest by date
         df = df.sort_values(by="date", ascending=True).reset_index(drop=True)
 
         # Categorize transactions based on matching rules
