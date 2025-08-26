@@ -39,13 +39,11 @@ def classify_transaction(row):
         return "Unknown"
 
 # --- Normalizers for each account type ---
-def normalize_ptsb(df, bq_balance=None):
+def normalize_ptsb(df):
     df["date"] = pd.to_datetime(df["Date"],format="%d/%m/%Y", errors="coerce")
     df["debit"] = pd.to_numeric(df["Money Out (€)"], errors="coerce").fillna(0).abs()
     df["credit"] = pd.to_numeric(df["Money In (€)"], errors="coerce").fillna(0)
     df["description"] = pd.Series(df["Description"], dtype="string").str.strip()
-
-    # Account includes balance in CSV → use it
     df["balance"] = pd.to_numeric(df["Balance (€)"], errors="coerce")
 
     # Drop unnecessary columns (some give pyarrow errors due to mixed types)
@@ -53,40 +51,30 @@ def normalize_ptsb(df, bq_balance=None):
 
     return df[["date", "debit", "credit", "description", "balance"]]
 
-def normalize_revolut(df, bq_balance=None):
+def normalize_revolut(df):
     df["date"] = pd.to_datetime(df["Date operation"],format="%d/%m/%Y", errors="coerce")
     df["debit"] = pd.to_numeric(df["Debit"], errors="coerce").fillna(0).abs()
     df["credit"] = pd.to_numeric(df["Credit"], errors="coerce").fillna(0)
     df["description"] = pd.Series(df["Libelle"], dtype="string").str.strip()
-
-    # Account includes balance in CSV → use it
     df["balance"] = pd.to_numeric(df["Balance (€)"], errors="coerce")
 
     return df[["date", "debit", "credit", "description", "balance"]]
 
-def normalize_cmb(df, bq_balance):
+def normalize_cmb(df):
     df["date"] = pd.to_datetime(df["Date operation"],format="%d/%m/%Y", errors="coerce")
     df["debit"] = pd.to_numeric(df["Debit"], errors="coerce").fillna(0).abs()
     df["credit"] = pd.to_numeric(df["Credit"], errors="coerce").fillna(0)
     df["description"] = pd.Series(df["Libelle"], dtype="string").str.strip()
 
-    # Account has no balance in CSV → calculate balance
-    start_balance = bq_balance if bq_balance is not None else 0.0
-    df["balance"] = start_balance + (df["credit"] - df["debit"]).cumsum()
+    return df[["date", "debit", "credit", "description"]]
 
-    return df[["date", "debit", "credit", "description", "balance"]]
-
-def normalize_usbank(df, bq_balance):
+def normalize_usbank(df):
     df["date"] = pd.to_datetime(df["Date"],format="%d/%m/%Y", errors="coerce")
     df["debit"] = pd.to_numeric(df["Money Out (€)"], errors="coerce").fillna(0).abs()
     df["credit"] = pd.to_numeric(df["Money In (€)"], errors="coerce").fillna(0)
     df["description"] = pd.Series(df["Description"], dtype="string").str.strip()
 
-    # Account has no balance in CSV → calculate balance
-    start_balance = bq_balance if bq_balance is not None else 0.0
-    df["balance"] = start_balance + (df["credit"] - df["debit"]).cumsum()
-
-    return df[["date", "debit", "credit", "description", "balance"]]
+    return df[["date", "debit", "credit", "description"]]
 
 # Bank → bank handler mapping ---
 bank_handlers = {
@@ -94,21 +82,25 @@ bank_handlers = {
         "reader": pd.read_excel,
         "reader_kwargs": {"header": 12, "skipfooter": 1},
         "normalizer": normalize_ptsb,
+        "has_balance": True,
     },
     "revolut": {
         "reader": pd.read_csv,
         "reader_kwargs": {"sep": ",", "decimal": ".", "header": 0},
         "normalizer": normalize_revolut,
+        "has_balance": True,
     },
     "usbank": {
         "reader": pd.read_csv,
         "reader_kwargs": {"sep": ",", "decimal": ".", "header": 0},
         "normalizer": normalize_usbank,
+        "has_balance": False,
     },
     "cmb": {
         "reader": pd.read_csv,
         "reader_kwargs": {"sep": ";", "decimal": ","},
         "normalizer": normalize_cmb,
+        "has_balance": False,
     },
 }
 
@@ -172,9 +164,9 @@ if uploaded_file is not None:
         bq_balance = float(latest_bq_tx.get("balance") or 0.0) # default to 0.0 if None
     
         # Apply normalizer to uploaded dataframe
-        df = handler["normalizer"](df, bq_balance=bq_balance)
+        df = handler["normalizer"](df)
 
-        # Sort oldest → newest by date
+        # Sort oldest → newest by date 
         df = df.sort_values(by="date", ascending=True).reset_index(drop=True)
 
         # Categorize transactions based on matching rules
@@ -202,6 +194,14 @@ if uploaded_file is not None:
             marker_index = df[mask].index.max()  # last matching row
             new_transactions = df.loc[marker_index+1:].copy()
             # Keep only the required columns
+
+            # If account has no balance in CSV → calculate balance
+            if not handler["has_balance"]:
+                start_balance = bq_balance if bq_balance is not None else 0.0
+                new_transactions["balance"] = start_balance + (
+                    new_transactions["credit"] - new_transactions["debit"]
+                ).cumsum()
+
             new_transactions = new_transactions[[
                 "date",
                 "debit",
