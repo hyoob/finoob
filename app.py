@@ -7,7 +7,7 @@ from google.cloud import bigquery
 from datetime import datetime, timezone
 
 # Load categories from JSON file.
-with open("categories.json", "r") as f:
+with open(st.secrets["categories_file"]["prod"], "r") as f:
     categories = json.load(f)
 
 # --- Load account → bank mapping ---
@@ -15,7 +15,7 @@ with open("accounts.json") as f:
     account_map = json.load(f)
 
 # Set BigQuery table ID
-table_id = "finoob.bank_transactions.sample_transactions"
+table_id = st.secrets["bigquery_table"]["prod"]
 
 # Helper BQ query function
 # Uses st.cache_data to only rerun when the query changes or after x min.
@@ -52,11 +52,26 @@ def normalize_ptsb(df):
     return df[["date", "debit", "credit", "description", "balance"]]
 
 def normalize_revolut(df):
-    df["date"] = pd.to_datetime(df["Date operation"],format="%d/%m/%Y", errors="coerce")
-    df["debit"] = pd.to_numeric(df["Debit"], errors="coerce").fillna(0).abs()
-    df["credit"] = pd.to_numeric(df["Credit"], errors="coerce").fillna(0)
-    df["description"] = pd.Series(df["Libelle"], dtype="string").str.strip()
-    df["balance"] = pd.to_numeric(df["Balance (€)"], errors="coerce")
+    # Filter for 'COMPLETED' transactions only, as others may be pending/reverted.
+    df = df[df["State"] == "COMPLETED"].copy()
+    # Ensure 'Amount' is a numeric column for comparison
+    df["Amount_Numeric"] = pd.to_numeric(df["Amount"], errors="coerce").fillna(0)
+    # CREDIT column: Value is assigned if Amount_Numeric > 0, otherwise 0
+    df["credit"] = np.where(df["Amount_Numeric"] > 0, df["Amount_Numeric"], 0)
+    # DEBIT column: Absolute value is assigned if Amount_Numeric < 0, otherwise 0
+    # The negative amount is converted to a positive debit
+    df["debit"] = np.where(df["Amount_Numeric"] < 0, df["Amount_Numeric"].abs(), 0)
+    df["date"] = (
+        pd.to_datetime(df["Started Date"], format="%Y-%m-%d %H:%M:%S", errors="coerce")
+        .dt.normalize()
+    )
+    df["description"] = pd.Series(df["Description"], dtype="string").str.strip()
+    df["balance"] = pd.to_numeric(df["Balance"], errors="coerce")
+
+    # Drop unnecessary columns (some give pyarrow errors due to mixed types)
+    df = df.drop(
+        columns=["Started Date", "Amount", "Description", "Balance", "Amount_Numeric", "State"]
+    )
 
     return df[["date", "debit", "credit", "description", "balance"]]
 
@@ -155,7 +170,6 @@ if uploaded_file is not None:
         latest_bq_tx = None
         latest_bq_date = None
 
-
     if latest_bq_tx:
         # Define values for latest transaction in BigQuery
         bq_description = latest_bq_tx["description"]
@@ -171,10 +185,10 @@ if uploaded_file is not None:
 
         # Categorize transactions based on matching rules
         def categorize(description):
-            desc = str(description).lower()
+            desc = str(description)
             for cat, items in categories.items():
                 for item in items:
-                    keyword = item["keyword"].lower().strip()
+                    keyword = item["keyword"]
                     label = item["label"]
                     if keyword in desc:
                         return pd.Series([cat, label])
@@ -311,7 +325,7 @@ number = st.sidebar.slider("Pick a number", 0, 10, 5)
 # client = bigquery.Client(credentials=credentials)
 
 # # TODO(developer): Set table_id to the ID of table to append to.
-# table_id = "finoob.bank_transactions.sample_transactions"
+# table_id = st.secrets["bigquery_table"]["sample"]
 
 # rows_to_insert = [
 #     {"account": "PTSB Checking HB", "date": "2025-07-08", "month": "2025-07", "transaction_type": "Debit", "description": "CNC NYA*Maguires 05/07 1", "label": "big expense", "category": "shopping", "debit": -2.00, "credit": 0.0, "year": 2025},

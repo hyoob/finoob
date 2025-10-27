@@ -1,0 +1,15 @@
+{
+  "Groceries": [
+    { "keyword": "supervalue", "label": "SuperValu" }
+  ],
+  "Utilities": [
+    { "keyword": "CT EIR", "label": "Eir" },
+    { "keyword": "Electric Ireland", "label": "Electric Ireland" }
+  ],
+  "Travel": [
+    { "keyword": "lastminuteco", "label": "Last Minute Co" }
+  ],
+  "Furniture / Appliances": [
+    { "keyword": " MADDY ", "label": "Maddy's Hardware shop" }
+  ]
+}

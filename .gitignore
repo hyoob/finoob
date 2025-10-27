@@ -10,3 +10,6 @@ __pycache__/
 
 # Google Cloud credentials
 finoob-3e6282c0d80c.json
+
+# Categories prod file
+categories.json
