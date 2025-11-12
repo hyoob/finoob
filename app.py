@@ -7,7 +7,7 @@ from google.cloud import bigquery
 from datetime import datetime, timezone
 
 # Set environment to production or development
-ENV = "dev"  # Change to "dev" for development, "prod" for production
+ENV = "prod"  # Change to "dev" for development, "prod" for production
 
 # Load categories from JSON file.
 with open(st.secrets["categories_file"]["prod"], "r") as f:
@@ -170,6 +170,19 @@ def clear_uncategorized_data():
     if 'status_message' in st.session_state:
         st.session_state.status_message = None
 
+def pick_account():
+    """Helper function to pick account from dropdown."""
+    account_options = ["-- Select an account --"] + list(account_map.keys())    
+
+    account = st.selectbox("Select the account for the file you want to upload:", account_options)
+
+    # Prevent continuing unless user has selected a real account
+    if account == "-- Select an account --":
+        st.warning("⚠️ Please select an account to continue.")
+        st.stop()
+
+    return account
+
 # Bank → bank handler mapping ---
 bank_handlers = {
     "ptsb": {
@@ -220,7 +233,7 @@ else:
 st.sidebar.header("Mode")
 mode = st.sidebar.radio(
     "What do you want to do?",
-    ("📥 Import Transactions", "🏷️ Categorize Existing")
+    ("📥 Import Transactions", "🏷️ Categorize Existing", "💰 Reimbursements")
 )
 
 # --- MODE 1: IMPORT TRANSACTIONS ---
@@ -229,14 +242,7 @@ if mode == "📥 Import Transactions":
     st.header("📥 Import New Transactions")
 
     # Ask the user which account the uploaded file is for
-    account_options = ["-- Select an account --"] + list(account_map.keys())    
-
-    account = st.selectbox("Select the account for the file you want to upload:", account_options)
-
-    # Prevent continuing unless user has selected a real account
-    if account == "-- Select an account --":
-        st.warning("⚠️ Please select an account to continue.")
-        st.stop()
+    account = pick_account()
 
     # File uploader
     uploaded_file = st.file_uploader("Choose a CSV file", type=["csv","xls"])
@@ -416,17 +422,7 @@ elif mode == "🏷️ Categorize Existing":
     st.write("Fetch a batch of uncategorized transactions from BigQuery to edit.")
 
     # Ask the user which account to fetch uncategorized transactions for
-    account_options = ["-- Select an account --"] + list(account_map.keys())
-    account = st.selectbox(
-        "Select the account to fetch uncategorized transactions:", 
-        account_options,
-        on_change=clear_uncategorized_data
-    )
-
-    # Prevent continuing unless user has selected a real account
-    if account == "-- Select an account --":
-        st.warning("⚠️ Please select an account to continue.")
-        st.stop()
+    account = pick_account()
 
     # Only show the "Fetch" button if data isn't already in session state
     if 'uncategorized_df' not in st.session_state:
@@ -492,36 +488,11 @@ elif mode == "🏷️ Categorize Existing":
             # Call the function to handle the BQ MERGE logic
             run_update_logic(edited_df, client, table_id)
             # st.warning("Update logic not yet implemented.")
-        
 
+# --- MODE 3: REIMBURSEMENTS ---
+elif mode == "💰 Reimbursements":
+    st.header("💰 Reimbursements")
+    st.info("This feature is coming soon! Stay tuned. 🚧")   
 
-# # Main output
-# st.write(f"👋 Hello, {name}!")
-# st.write(f"You picked **{number}**.")
+    account = pick_account()     
 
-# # Sample dataframe
-# df = pd.DataFrame(
-#     np.random.randn(10, 2),
-#     columns=['Column 1', 'Column 2']
-# )
-# st.line_chart(df)
-
-# # Insert rows into BigQuery table.
-
-# # Construct a BigQuery client object.
-# client = bigquery.Client(credentials=credentials)
-
-# # TODO(developer): Set table_id to the ID of table to append to.
-# table_id = st.secrets["bigquery_table"]["sample"]
-
-# rows_to_insert = [
-#     {"account": "PTSB Checking HB", "date": "2025-07-08", "month": "2025-07", "transaction_type": "Debit", "description": "CNC NYA*Maguires 05/07 1", "label": "big expense", "category": "shopping", "debit": -2.00, "credit": 0.0, "year": 2025},
-# ]
-
-# errors = client.insert_rows_json(
-#     table_id, rows_to_insert, row_ids=[None] * len(rows_to_insert)
-# )  # Make an API request.
-# if errors == []:
-#     st.success("New rows have been added to BQ.")
-# else:
-#     st.write("Encountered errors while inserting rows: {}".format(errors))
