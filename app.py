@@ -7,7 +7,7 @@ from google.cloud import bigquery
 from datetime import datetime, timezone
 
 # Set environment to production or development
-ENV = "prod"  # Change to "dev" for development, "prod" for production
+ENV = "dev"  # Change to "dev" for development, "prod" for production
 
 # Load categories from JSON file.
 with open(st.secrets["categories_file"]["prod"], "r") as f:
@@ -182,6 +182,66 @@ def pick_account(picker_message):
         st.stop()
 
     return account
+
+def display_status_message():
+    """Displays a persistent status message from session state."""
+    if 'status_message' in st.session_state and st.session_state.status_message:
+        # Check if it was an error or success to choose the color
+        if st.session_state.status_message.startswith("🎉"):
+            st.success(st.session_state.status_message)
+        else:
+            st.error(st.session_state.status_message)
+
+        # Clear the message so it doesn't show up again on the next action
+        st.session_state.status_message = None
+
+def get_changed_rows(original_df, edited_df):
+    """
+    Compares two DataFrames and returns only the rows from edited_df 
+    that have changed, using a merge-on-all-columns strategy.
+    """
+    
+    # 1. Define the columns we care about for the diff
+    # The primary keys + the editable columns
+    id_cols = ['transaction_number', 'account']
+    data_cols = ['category', 'label']
+    cols_to_check = id_cols + data_cols
+
+    # 2. Create a clean "original" subset
+    # We must apply the same fillna logic to both sides
+    # to avoid false positives (e.g., detecting None -> '' as a change).
+    original_subset = original_df[cols_to_check].copy()
+    original_subset['category'] = original_subset['category'].fillna('')
+    original_subset['label'] = original_subset['label'].fillna('')
+    
+    # Add a marker column to identify original rows
+    original_subset['_is_original'] = True
+
+    # 3. Create a clean "new" subset from the editor
+    new_subset = edited_df[cols_to_check].copy()
+    new_subset['category'] = new_subset['category'].fillna('')
+    new_subset['label'] = new_subset['label'].fillna('')
+
+    # 4. Find the changed rows
+    # We merge the new data with the original data on ALL columns.
+    # If a row from `new_subset` doesn't find an *exact* match in
+    # `original_subset`, it's a changed row.
+    merged = pd.merge(
+        new_subset,
+        original_subset,
+        on=cols_to_check,
+        how='left'  # Keep all rows from new_subset
+    )
+
+    # Changed rows will have `NaN` in the `_is_original` column
+    changed_rows = merged[merged['_is_original'].isnull()]
+
+    # 5. Get the final DataFrame to upload (just the changed rows)
+    # We only need the ID and data columns, not the marker.
+    df_to_upload = changed_rows[cols_to_check]
+
+    return df_to_upload
+
 
 # Bank → bank handler mapping ---
 bank_handlers = {
@@ -409,15 +469,7 @@ elif mode == "🏷️ Categorize Existing":
     st.header("🏷️ Categorize Existing Transactions")
 
     #CHECK FOR AND DISPLAY PERSISTENT STATUS MESSAGE 
-    if 'status_message' in st.session_state and st.session_state.status_message:
-        # Check if it was an error or success to choose the color
-        if st.session_state.status_message.startswith("🎉"):
-            st.success(st.session_state.status_message)
-        else:
-            st.error(st.session_state.status_message)
-        
-        # Clear the message so it doesn't show up again on the next action
-        st.session_state.status_message = None
+    display_status_message()
 
     st.write("Fetch a batch of uncategorized transactions from BigQuery to edit.")
 
@@ -485,9 +537,23 @@ elif mode == "🏷️ Categorize Existing":
         )
 
         if st.button("💾 Save Category Updates"):
-            # Call the function to handle the BQ MERGE logic
-            run_update_logic(edited_df, client, table_id)
-            # st.warning("Update logic not yet implemented.")
+            # 1. Get the original DataFrame from session state
+            original_data = st.session_state.uncategorized_df
+            
+            # 2. Get the new DataFrame from the data editor
+            new_data = edited_df 
+            
+            # 3. Call the function to find *only* the changed rows
+            df_to_upload = get_changed_rows(original_data, new_data)
+
+            # 4. Only run the BQ update if there are actual changes
+            if not df_to_upload.empty:
+                # Pass *only* the changed rows to your BQ function
+                run_update_logic(df_to_upload, client, table_id)
+            else:
+                # If no changes, just set a message and refresh
+                st.session_state.status_message = "No changes detected."
+                st.rerun()
 
 # --- MODE 3: REIMBURSEMENTS ---
 elif mode == "💰 Reimbursements":
