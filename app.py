@@ -170,11 +170,11 @@ def clear_uncategorized_data():
     if 'status_message' in st.session_state:
         st.session_state.status_message = None
 
-def pick_account():
+def pick_account(picker_message):
     """Helper function to pick account from dropdown."""
     account_options = ["-- Select an account --"] + list(account_map.keys())    
 
-    account = st.selectbox("Select the account for the file you want to upload:", account_options)
+    account = st.selectbox(picker_message, account_options)
 
     # Prevent continuing unless user has selected a real account
     if account == "-- Select an account --":
@@ -242,7 +242,7 @@ if mode == "📥 Import Transactions":
     st.header("📥 Import New Transactions")
 
     # Ask the user which account the uploaded file is for
-    account = pick_account()
+    account = pick_account("Select the account for the file you want to upload:")
 
     # File uploader
     uploaded_file = st.file_uploader("Choose a CSV file", type=["csv","xls"])
@@ -422,7 +422,7 @@ elif mode == "🏷️ Categorize Existing":
     st.write("Fetch a batch of uncategorized transactions from BigQuery to edit.")
 
     # Ask the user which account to fetch uncategorized transactions for
-    account = pick_account()
+    account = pick_account("Select the account to fetch uncategorized transactions from:")
 
     # Only show the "Fetch" button if data isn't already in session state
     if 'uncategorized_df' not in st.session_state:
@@ -494,5 +494,5 @@ elif mode == "💰 Reimbursements":
     st.header("💰 Reimbursements")
     st.info("This feature is coming soon! Stay tuned. 🚧")   
 
-    account = pick_account()     
+    account = pick_account("Select an account to check reimbursements:")     
 
