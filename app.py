@@ -195,7 +195,7 @@ def display_status_message():
         # Clear the message so it doesn't show up again on the next action
         st.session_state.status_message = None
 
-def get_changed_rows(original_df, edited_df):
+def get_changed_rows(original_df, edited_df, data_cols):
     """
     Compares two DataFrames and returns only the rows from edited_df 
     that have changed, using a merge-on-all-columns strategy.
@@ -204,23 +204,38 @@ def get_changed_rows(original_df, edited_df):
     # 1. Define the columns we care about for the diff
     # The primary keys + the editable columns
     id_cols = ['transaction_number', 'account']
-    data_cols = ['category', 'label']
     cols_to_check = id_cols + data_cols
 
     # 2. Create a clean "original" subset
-    # We must apply the same fillna logic to both sides
-    # to avoid false positives (e.g., detecting None -> '' as a change).
     original_subset = original_df[cols_to_check].copy()
-    original_subset['category'] = original_subset['category'].fillna('')
-    original_subset['label'] = original_subset['label'].fillna('')
-    
-    # Add a marker column to identify original rows
-    original_subset['_is_original'] = True
-
     # 3. Create a clean "new" subset from the editor
     new_subset = edited_df[cols_to_check].copy()
-    new_subset['category'] = new_subset['category'].fillna('')
-    new_subset['label'] = new_subset['label'].fillna('')
+    
+    # Handle NaNs in both DataFrames for accurate comparison
+    for col in data_cols:
+        # Check if the column is string or generic "object"
+        if pd.api.types.is_string_dtype(original_subset[col]) or \
+           pd.api.types.is_object_dtype(original_subset[col]):
+            
+            original_subset[col] = original_subset[col].fillna('')
+            new_subset[col] = new_subset[col].fillna('')
+            
+        # Check if it's a numeric column (int, float, etc.)
+        elif pd.api.types.is_numeric_dtype(original_subset[col]):
+            
+            # Fill numeric NaNs with a sentinel value (e.g., 0)
+            original_subset[col] = original_subset[col].fillna(0)
+            new_subset[col] = new_subset[col].fillna(0)
+        
+        # Check for boolean columns
+        elif pd.api.types.is_bool_dtype(original_subset[col]):
+            original_subset[col] = original_subset[col].fillna(False)
+            new_subset[col] = new_subset[col].fillna(False)
+        # else:
+        #    ...
+
+    # Add a marker column to identify original rows
+    original_subset['_is_original'] = True
 
     # 4. Find the changed rows
     # We merge the new data with the original data on ALL columns.
@@ -544,7 +559,9 @@ elif mode == "🏷️ Categorize Existing":
             new_data = edited_df 
             
             # 3. Call the function to find *only* the changed rows
-            df_to_upload = get_changed_rows(original_data, new_data)
+            # Define which columns we care about for changes
+            data_cols = ['category', 'label']
+            df_to_upload = get_changed_rows(original_data, new_data, data_cols)
 
             # 4. Only run the BQ update if there are actual changes
             if not df_to_upload.empty:
