@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import json
+import queries
 from google.oauth2 import service_account
 from google.cloud import bigquery
 from datetime import datetime, timezone
@@ -121,16 +122,7 @@ def run_update_logic(edited_df, client, table_id):
         job.result()  # Wait for the temp table to be created
 
         # 2. Run MERGE statement to update the main table from the temp table
-        merge_query = f"""
-        MERGE `{table_id}` T
-        USING `{temp_table_id}` S
-        ON T.transaction_number = S.transaction_number AND T.account = S.account
-        WHEN MATCHED THEN
-          UPDATE SET
-            T.category = S.category,
-            T.label = S.label,
-            T.last_updated = CURRENT_TIMESTAMP()
-        """
+        merge_query = queries.get_merge_update_query(table_id, temp_table_id)
         merge_job = client.query(merge_query)
         merge_job.result()  # Wait for the MERGE to complete
         row_count = merge_job.num_dml_affected_rows
@@ -333,13 +325,7 @@ if mode == "📥 Import Transactions":
         st.success("File uploaded successfully!")
 
         # Query the latest transaction from BigQuery for this account
-        rows = run_query(f"""
-            SELECT *
-            FROM `{table_id}`
-            WHERE account = '{account}'
-            ORDER BY transaction_number DESC, date DESC
-            LIMIT 1
-        """)
+        rows = run_query(queries.get_latest_transaction_query(table_id, account))
 
         if rows:
             latest_bq_tx = rows[0]  # dict with fields from BQ
@@ -450,11 +436,7 @@ if mode == "📥 Import Transactions":
                     edited_df = edited_df.sort_values(by="date", ascending=True).reset_index(drop=True)
 
                     # Get current max transaction_number for the account
-                    query = f"""
-                        SELECT MAX(transaction_number) as max_num
-                        FROM `{table_id}`
-                        WHERE account = '{account}'
-                    """
+                    query = queries.get_max_transaction_id_query(table_id, account)
                     result = client.query(query).result()
                     row = list(result)[0]
                     start_num = row["max_num"] if row["max_num"] is not None else 0
@@ -495,21 +477,7 @@ elif mode == "🏷️ Categorize Existing":
     if 'uncategorized_df' not in st.session_state:
         if st.button("Fetch Uncategorized Transactions"):
             # Fetch transactions that are uncategorized
-            query = f"""
-                SELECT 
-                    transaction_number, 
-                    date, 
-                    description, 
-                    debit, 
-                    credit, 
-                    category, 
-                    label, 
-                    account
-                FROM `{table_id}`
-                WHERE (category IS NULL OR category = '' OR category = 'TBD')
-                    AND account = '{account}'
-                ORDER BY date DESC, transaction_number DESC
-            """
+            query = queries.get_uncategorized_transactions_query(table_id, account)
             data = run_query(query)
             if data:
                 # Store fetched data in session state
