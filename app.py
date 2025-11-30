@@ -3,12 +3,7 @@ import pandas as pd
 import numpy as np
 import json
 import queries
-from google.oauth2 import service_account
-from google.cloud import bigquery
-from datetime import datetime, timezone
-
-# Set environment to production or development
-ENV = "dev"  # Change to "dev" for development, "prod" for production
+from utils import processing, db_client
 
 # Load categories from JSON file.
 with open(st.secrets["categories_file"]["prod"], "r") as f:
@@ -18,141 +13,8 @@ with open(st.secrets["categories_file"]["prod"], "r") as f:
 with open("accounts.json") as f:
     account_map = json.load(f)
 
-# Set BigQuery table ID
-table_id = st.secrets["bigquery_table"][ENV]
-
-# Helper BQ query function
-# Uses st.cache_data to only rerun when the query changes or after x min.
-@st.cache_data(ttl=1)
-def run_query(query):
-    query_job = client.query(query)
-    rows_raw = query_job.result()
-    # Convert to list of dicts. Required for st.cache_data to hash the return value.
-    rows = [dict(row) for row in rows_raw]
-    return rows
-
-# Function to classify transaction type
-def classify_transaction(row):
-    if row["debit"] != 0 and row["credit"] == 0:
-        return "Debit"
-    elif row["credit"] != 0 and row["debit"] == 0:
-        return "Credit"
-    elif row["debit"] != 0 and row["credit"] != 0:
-        return "Error"  # or "Mixed", depending on how you want to flag this
-    else:
-        return "Unknown"
-
-# --- Normalizers for each account type ---
-def normalize_ptsb(df):
-    df["date"] = pd.to_datetime(df["Date"],format="%d/%m/%Y", errors="coerce")
-    df["debit"] = pd.to_numeric(df["Money Out (€)"], errors="coerce").fillna(0).abs()
-    df["credit"] = pd.to_numeric(df["Money In (€)"], errors="coerce").fillna(0)
-    df["description"] = pd.Series(df["Description"], dtype="string").str.strip()
-    df["balance"] = pd.to_numeric(df["Balance (€)"], errors="coerce")
-
-    # Drop unnecessary columns (some give pyarrow errors due to mixed types)
-    df = df.drop(columns=["Money Out (€)", "Money In (€)", "Date", "Description"])
-
-    return df[["date", "debit", "credit", "description", "balance"]]
-
-def normalize_revolut(df):
-    # Filter for 'COMPLETED' transactions only, as others may be pending/reverted.
-    df = df[df["State"] == "COMPLETED"].copy()
-    # Ensure 'Amount' is a numeric column for comparison
-    df["Amount_Numeric"] = pd.to_numeric(df["Amount"], errors="coerce").fillna(0)
-    # CREDIT column: Value is assigned if Amount_Numeric > 0, otherwise 0
-    df["credit"] = np.where(df["Amount_Numeric"] > 0, df["Amount_Numeric"], 0)
-    # DEBIT column: Absolute value is assigned if Amount_Numeric < 0, otherwise 0
-    # The negative amount is converted to a positive debit
-    df["debit"] = np.where(df["Amount_Numeric"] < 0, df["Amount_Numeric"].abs(), 0)
-    df["date"] = (
-        pd.to_datetime(df["Started Date"], format="%Y-%m-%d %H:%M:%S", errors="coerce")
-        .dt.normalize()
-    )
-    df["description"] = pd.Series(df["Description"], dtype="string").str.strip()
-    df["balance"] = pd.to_numeric(df["Balance"], errors="coerce")
-
-    # Drop unnecessary columns (some give pyarrow errors due to mixed types)
-    df = df.drop(
-        columns=["Started Date", "Amount", "Description", "Balance", "Amount_Numeric", "State"]
-    )
-
-    return df[["date", "debit", "credit", "description", "balance"]]
-
-def normalize_cmb(df):
-    df["date"] = pd.to_datetime(df["Date operation"],format="%d/%m/%Y", errors="coerce")
-    df["debit"] = pd.to_numeric(df["Debit"], errors="coerce").fillna(0).abs()
-    df["credit"] = pd.to_numeric(df["Credit"], errors="coerce").fillna(0)
-    df["description"] = pd.Series(df["Libelle"], dtype="string").str.strip()
-
-    return df[["date", "debit", "credit", "description"]]
-
-def normalize_usbank(df):
-    df["date"] = pd.to_datetime(df["Date"],format="%d/%m/%Y", errors="coerce")
-    df["debit"] = pd.to_numeric(df["Money Out (€)"], errors="coerce").fillna(0).abs()
-    df["credit"] = pd.to_numeric(df["Money In (€)"], errors="coerce").fillna(0)
-    df["description"] = pd.Series(df["Description"], dtype="string").str.strip()
-
-    return df[["date", "debit", "credit", "description"]]
-
-# Function to update existing BigQuery rows using MERGE
-def run_update_logic(edited_df, client, table_id):
-    """
-    Updates BQ table using a MERGE statement for efficiency.
-    """
-    st.info("Saving updates... please wait.")
-    
-    # We only need the primary keys and the columns to be updated
-    df_to_merge = edited_df[['transaction_number', 'account', 'category', 'label']].copy()
-    
-    # Handle potential None values from the data editor
-    df_to_merge['category'] = df_to_merge['category'].fillna('')
-    df_to_merge['label'] = df_to_merge['label'].fillna('')
-
-    try:
-        # Get table details to build temp table ID
-        table_ref = client.get_table(table_id)
-        project = table_ref.project
-        dataset = table_ref.dataset_id
-        temp_table_id = f"{project}.{dataset}.temp_updates_{int(datetime.now(timezone.utc).timestamp())}"
-
-        # 1. Load edited data to a temporary table
-        job_config = bigquery.LoadJobConfig()
-        job = client.load_table_from_dataframe(df_to_merge, temp_table_id, job_config=job_config)
-        job.result()  # Wait for the temp table to be created
-
-        # 2. Run MERGE statement to update the main table from the temp table
-        merge_query = queries.get_merge_update_query(table_id, temp_table_id)
-        merge_job = client.query(merge_query)
-        merge_job.result()  # Wait for the MERGE to complete
-        row_count = merge_job.num_dml_affected_rows
-
-        # 🟢 STORE THE SUCCESS MESSAGE IN SESSION STATE
-        st.session_state.status_message = f"🎉 Successfully updated {row_count} rows!"
-
-    except Exception as e:
-        st.session_state.status_message = f"An error occurred: {e}"
-        # Attempt to clean up temp table on error
-        try:
-            client.delete_table(temp_table_id)
-            st.warning("Cleaned up temporary table after error.")
-        except:
-            pass # Temp table might not exist if error was early
-    
-    finally:
-        # 3. Delete the temporary table
-        try:
-            client.delete_table(temp_table_id)
-        except Exception:
-            pass # Ignore if deletion fails
-
-       # 4. Clear the data and RERUN
-        if 'uncategorized_df' in st.session_state:
-            del st.session_state.uncategorized_df
-        # Important: clear the cache before rerun so the next "Fetch" gets fresh data
-        # run_query.clear() 
-        
-        st.rerun() # This will cause the instantaneous refresh
+# TODO: Move this to be fully handled in db_client
+table_id = db_client.get_table_id()
 
 def clear_session_state_data():
     """Clears transactions from session state."""
@@ -201,144 +63,15 @@ def display_status_message():
         # Clear the message so it doesn't show up again on the next action
         st.session_state.status_message = None
 
-def get_changed_rows(original_df, edited_df, data_cols):
-    """
-    Compares two DataFrames and returns only the rows from edited_df 
-    that have changed, using a merge-on-all-columns strategy.
-    """
-    
-    # 1. Define the columns we care about for the diff
-    # The primary keys + the editable columns
-    id_cols = ['transaction_number', 'account']
-    cols_to_check = id_cols + data_cols
-
-    # 2. Create a clean "original" subset
-    original_subset = original_df[cols_to_check].copy()
-    # 3. Create a clean "new" subset from the editor
-    new_subset = edited_df[cols_to_check].copy()
-    
-    # Handle NaNs in both DataFrames for accurate comparison
-    for col in data_cols:
-        # Check if the column is string or generic "object"
-        if pd.api.types.is_string_dtype(original_subset[col]) or \
-           pd.api.types.is_object_dtype(original_subset[col]):
-            
-            original_subset[col] = original_subset[col].fillna('')
-            new_subset[col] = new_subset[col].fillna('')
-            
-        # Check if it's a numeric column (int, float, etc.)
-        elif pd.api.types.is_numeric_dtype(original_subset[col]):
-            
-            # Fill numeric NaNs with a sentinel value (e.g., 0)
-            original_subset[col] = original_subset[col].fillna(0)
-            new_subset[col] = new_subset[col].fillna(0)
-        
-        # Check for boolean columns
-        elif pd.api.types.is_bool_dtype(original_subset[col]):
-            original_subset[col] = original_subset[col].fillna(False)
-            new_subset[col] = new_subset[col].fillna(False)
-        # else:
-        #    ...
-
-    # Add a marker column to identify original rows
-    original_subset['_is_original'] = True
-
-    # 4. Find the changed rows
-    # We merge the new data with the original data on ALL columns.
-    # If a row from `new_subset` doesn't find an *exact* match in
-    # `original_subset`, it's a changed row.
-    merged = pd.merge(
-        new_subset,
-        original_subset,
-        on=cols_to_check,
-        how='left'  # Keep all rows from new_subset
-    )
-
-    # Changed rows will have `NaN` in the `_is_original` column
-    changed_rows = merged[merged['_is_original'].isnull()]
-
-    # 5. Get the final DataFrame to upload (just the changed rows)
-    # We only need the ID and data columns, not the marker.
-    df_to_upload = changed_rows[cols_to_check]
-
-    return df_to_upload
-
-def link_reimbursement_struct_array(client, table_id, reimb_row, expense_row):
-    """
-    Links a credit to a debit using the nested 'reimbursement' struct schema.
-    """
-    try:
-        # 1. Extract Data using the argument name 'reimb_row'
-        r_id = reimb_row['transaction_number'] 
-        r_acc = reimb_row['account']            
-        r_amt = float(reimb_row['credit'])      
-
-        e_id = expense_row['transaction_number']
-        e_acc = expense_row['account']
-        
-        # Composite IDs
-        r_composite_id = f"{r_acc}:{r_id}"
-        e_composite_id = f"{e_acc}:{e_id}"
-
-        # 2. Construct the Query
-        query = queries.link_reimbursement_struct_array(
-            table_id, e_composite_id, r_id, r_acc, r_amt, r_composite_id, e_id, e_acc
-        )
-        
-       # 3. Execute
-        job = client.query(query)
-        job.result() 
-        
-        st.session_state.status_message = f"🎉 Linked! Added reimbursement of €{r_amt} to the list."
-        
-        # Clear cache to refresh the UI
-        run_query.clear()
-        
-    except Exception as e:
-        st.session_state.status_message = f"Error linking transactions: {e}"
-
-# Bank → bank handler mapping ---
-bank_handlers = {
-    "ptsb": {
-        "reader": pd.read_excel,
-        "reader_kwargs": {"header": 12, "skipfooter": 1},
-        "normalizer": normalize_ptsb,
-        "has_balance": True,
-    },
-    "revolut": {
-        "reader": pd.read_csv,
-        "reader_kwargs": {"sep": ",", "decimal": ".", "header": 0},
-        "normalizer": normalize_revolut,
-        "has_balance": True,
-    },
-    "usbank": {
-        "reader": pd.read_csv,
-        "reader_kwargs": {"sep": ",", "decimal": ".", "header": 0},
-        "normalizer": normalize_usbank,
-        "has_balance": False,
-    },
-    "cmb": {
-        "reader": pd.read_csv,
-        "reader_kwargs": {"sep": ";", "decimal": ","},
-        "normalizer": normalize_cmb,
-        "has_balance": False,
-    },
-}
-
 # Account → bank handler mapping
-account_handlers = {acc: bank_handlers[bank] for acc, bank in account_map.items()}
+account_handlers = {acc: processing.bank_handlers[bank] for acc, bank in account_map.items()}
 
-# Create API client.
-credentials = service_account.Credentials.from_service_account_info(
-    st.secrets["gcp_service_account"]
-)
-client = bigquery.Client(credentials=credentials)
 
 # Create a list of category options from the categories JSON
 category_options = list(categories.keys())
 
 # Streamlit app title
-if ENV == "dev":
+if db_client.get_env() == "dev":
     st.markdown("# 🚀 Finoob :green[Development]")
 else:
     st.markdown("# 🚀 Finoob :red[Production]")
@@ -368,7 +101,7 @@ if mode == "📥 Import Transactions":
     if uploaded_file is not None:
         # Detect file type by extension
         bank = account_map[account] 
-        handler = bank_handlers[bank]
+        handler = processing.bank_handlers[bank]
 
         # Read the file with the correct function & args
         df = handler["reader"](uploaded_file, **handler["reader_kwargs"])
@@ -376,7 +109,7 @@ if mode == "📥 Import Transactions":
         st.success("File uploaded successfully!")
 
         # Query the latest transaction from BigQuery for this account
-        rows = run_query(queries.get_latest_transaction_query(table_id, account))
+        rows = db_client.run_query(queries.get_latest_transaction_query(table_id, account))
 
         if rows:
             latest_bq_tx = rows[0]  # dict with fields from BQ
@@ -480,25 +213,19 @@ if mode == "📥 Import Transactions":
                     edited_df["account"] = account
                     edited_df["year"] = pd.to_datetime(edited_df["date"]).dt.year
                     edited_df["month"] = pd.to_datetime(edited_df["date"]).dt.to_period("M").astype(str)
-                    edited_df["transaction_type"] = edited_df.apply(classify_transaction, axis=1)
-                    edited_df["ingestion_timestamp"] = datetime.now(timezone.utc)
+                    edited_df["transaction_type"] = edited_df.apply(processing.classify_transaction, axis=1)
 
                     # Ensure transactions are sorted chronologically
                     edited_df = edited_df.sort_values(by="date", ascending=True).reset_index(drop=True)
 
                     # Get current max transaction_number for the account
-                    query = queries.get_max_transaction_id_query(table_id, account)
-                    result = client.query(query).result()
-                    row = list(result)[0]
-                    start_num = row["max_num"] if row["max_num"] is not None else 0
+                    start_num = db_client.get_max_transaction_number(table_id, account)
 
-                    # 🔹 Assign new transaction numbers sequentially
+                    # Assign new transaction numbers sequentially
                     edited_df["transaction_number"] = range(start_num + 1, start_num + 1 + len(edited_df))
 
                     # Load into BigQuery
-                    job_config = bigquery.LoadJobConfig(write_disposition="WRITE_APPEND")
-                    job = client.load_table_from_dataframe(edited_df, table_id, job_config=job_config)
-                    job.result()
+                    db_client.insert_transactions(edited_df)
 
                     st.success(f"🎉 Successfully inserted {len(edited_df)} rows into BigQuery")
 
@@ -533,7 +260,7 @@ elif mode == "🏷️ Categorize Existing":
         if st.button("Fetch Uncategorized Transactions"):
             # Fetch transactions that are uncategorized
             query = queries.get_uncategorized_transactions_query(table_id, account)
-            data = run_query(query)
+            data = db_client.run_query(query)
             if data:
                 # Store fetched data in session state
                 st.session_state.uncategorized_df = pd.DataFrame(data)
@@ -584,12 +311,12 @@ elif mode == "🏷️ Categorize Existing":
             # 3. Call the function to find *only* the changed rows
             # Define which columns we care about for changes
             data_cols = ['category', 'label']
-            df_to_upload = get_changed_rows(original_data, new_data, data_cols)
+            df_to_upload = processing.get_changed_rows(original_data, new_data, data_cols)
 
             # 4. Only run the BQ update if there are actual changes
             if not df_to_upload.empty:
                 # Pass *only* the changed rows to your BQ function
-                run_update_logic(df_to_upload, client, table_id)
+                db_client.run_update_logic(df_to_upload)
             else:
                 # If no changes, just set a message and refresh
                 st.session_state.status_message = "No changes detected."
@@ -619,7 +346,7 @@ elif mode == "💰 Reimbursements":
         # 2. Fetch Logic
         if st.button("Fetch Reimbursements", key="fetch_reimb"):
             query = queries.get_reimbursement_transactions_query(table_id, account_reimb)
-            data = run_query(query)
+            data = db_client.run_query(query)
             if data:
                 st.session_state.reimbursements_df = pd.DataFrame(data)
             else:
@@ -656,7 +383,7 @@ elif mode == "💰 Reimbursements":
         # 2. Fetch Logic
         if st.button("Fetch last 1000 expenses", key="fetch_all"):
             query = queries.get_all_expenses_query(table_id, account_all)
-            data = run_query(query)
+            data = db_client.run_query(query)
             if data:
                 st.session_state.all_tx_df = pd.DataFrame(data)
 
@@ -756,7 +483,7 @@ elif mode == "💰 Reimbursements":
 
         # --- 6. The Action Button ---
         if st.button("✅ Confirm & Append", type="primary"):
-            link_reimbursement_struct_array(client, table_id, reimb_row, expense_row)
+            db_client.link_reimbursement_struct_array(reimb_row, expense_row)
             st.rerun()
 
     elif len(r_selection) > 0:
