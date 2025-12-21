@@ -5,6 +5,7 @@ import json
 import queries
 from utils import processing, db_client
 
+# TODO: Move loading categories to processing.py
 # Load categories from JSON file.
 with open(st.secrets["categories_file"]["prod"], "r") as f:
     categories = json.load(f)
@@ -99,144 +100,98 @@ if mode == "📥 Import Transactions":
     uploaded_file = st.file_uploader("Choose a CSV file", type=["csv","xls"])
 
     if uploaded_file is not None:
-        # Detect file type by extension
-        bank = account_map[account] 
-        handler = processing.bank_handlers[bank]
+        try: 
+            # Load the uploaded file into a DataFrame
+            df = processing.load_transaction_file(uploaded_file, account)
 
-        # Read the file with the correct function & args
-        df = handler["reader"](uploaded_file, **handler["reader_kwargs"])
+            st.success("File uploaded successfully!")
 
-        st.success("File uploaded successfully!")
+            # Query the latest transaction from BigQuery for this account
+            rows = db_client.run_query(queries.get_latest_transaction_query(table_id, account))
 
-        # Query the latest transaction from BigQuery for this account
-        rows = db_client.run_query(queries.get_latest_transaction_query(table_id, account))
-
-        if rows:
-            latest_bq_tx = rows[0]  # dict with fields from BQ
-            latest_bq_date = pd.to_datetime(latest_bq_tx["date"])
-        else:
-            latest_bq_tx = None
-            latest_bq_date = None
-
-        if latest_bq_tx:
-            # Define values for latest transaction in BigQuery
-            bq_description = latest_bq_tx["description"]
-            bq_debit = float(latest_bq_tx.get("debit", 0))
-            bq_credit = float(latest_bq_tx.get("credit", 0))
-            bq_balance = float(latest_bq_tx.get("balance") or 0.0) # default to 0.0 if None
-        
-            # Apply normalizer to uploaded dataframe
-            df = handler["normalizer"](df)
-
-            # Sort oldest → newest by date 
-            df = df.sort_values(by="date", ascending=True).reset_index(drop=True)
-
-            # Categorize transactions based on matching rules
-            def categorize(description):
-                desc = str(description)
-                for cat, items in categories.items():
-                    for item in items:
-                        keyword = item["keyword"]
-                        label = item["label"]
-                        if keyword in desc:
-                            return pd.Series([cat, label])
-                return pd.Series(["", ""])
-
-            df[["category", "label"]] = df["description"].apply(categorize)
-
-            # Find the marker row in uploaded CSV
-            mask = (
-                (df["date"] == latest_bq_date) &
-                (df["description"] == bq_description) &
-                (df["debit"] == bq_debit) &
-                (df["credit"] == bq_credit)
-            )
-
-            if mask.any():
-                marker_index = df[mask].index.max()  # last matching row
-                new_transactions = df.loc[marker_index+1:].copy()
-                # Keep only the required columns
-
-                # If account has no balance in CSV → calculate balance
-                if not handler["has_balance"]:
-                    start_balance = bq_balance if bq_balance is not None else 0.0
-                    new_transactions["balance"] = start_balance + (
-                        new_transactions["credit"] - new_transactions["debit"]
-                    ).cumsum()
-
-                new_transactions = new_transactions[[
-                    "date",
-                    "debit",
-                    "credit",
-                    "description",
-                    "category",
-                    "label",
-                    "balance"
-                ]]
+            if rows:
+                latest_bq_tx = rows[0]  # dict with fields from BQ
             else:
-                # If not found, assume all CSV rows are new
-                st.warning("⚠️ Could not find the last BQ transaction in the CSV. Keeping all rows.")
+                latest_bq_tx = None
+
+            if latest_bq_tx:
+                # Get new transactions after the latest BQ transaction
+                new_transactions, warning, latest_bq_date = processing.get_new_transactions(
+                    account, 
+                    latest_bq_tx, 
+                    df
+                )
+                
+                # Check if a warning was returned and display it
+                if warning:
+                    st.warning(warning)
+                
+                # Categorize the new transactions
+                processing.categorize_transactions(new_transactions, categories)
+
+                st.write(f"Transactions newer than the last BQ transaction ({latest_bq_date.date()}):")
+
+                # Display the new transactions in a data editor
+                edited_df = st.data_editor(
+                    new_transactions,
+                    column_config={
+                        "date": st.column_config.DateColumn(
+                            "date",
+                            format="YYYY-MM-DD"
+                        ),
+                        "category": st.column_config.SelectboxColumn(
+                            "category",
+                            help="The category of the app",
+                            width="medium",
+                            options=category_options,
+                            required=True,
+                        ),
+                        "label": st.column_config.TextColumn(
+                            "label",
+                            help="The subcategory (e.g. clean label for the keyword)",
+                            required=True,
+                        ),
+                    },
+                    hide_index=True,
+                )
+
+                if not edited_df.empty:
+                    if st.button("💾 Save new transactions to BigQuery"):
+                        # Ensure date column is datetime.date
+                        edited_df["date"] = pd.to_datetime(edited_df["date"]).dt.date
+                        
+                        # Add derived fields expected in BQ table
+                        edited_df["account"] = account
+                        edited_df["year"] = pd.to_datetime(edited_df["date"]).dt.year
+                        edited_df["month"] = pd.to_datetime(edited_df["date"]).dt.to_period("M").astype(str)
+                        edited_df["transaction_type"] = edited_df.apply(processing.classify_transaction, axis=1)
+
+                        # Ensure transactions are sorted chronologically
+                        edited_df = edited_df.sort_values(by="date", ascending=True).reset_index(drop=True)
+
+                        # Get current max transaction_number for the account
+                        start_num = db_client.get_max_transaction_number(table_id, account)
+
+                        # Assign new transaction numbers sequentially
+                        edited_df["transaction_number"] = range(start_num + 1, start_num + 1 + len(edited_df))
+
+                        # Load into BigQuery
+                        db_client.insert_transactions(edited_df)
+
+                        st.success(f"🎉 Successfully inserted {len(edited_df)} rows into BigQuery")
+
+
+                if new_transactions.empty:
+                    st.info("No new transactions found.")
+                else:
+                    st.success(f"✅ Found {len(new_transactions)} new transactions.")
+            else:
+                st.warning("No transactions found in BigQuery. Keeping all CSV rows.")
                 new_transactions = df
-
-            st.write(f"Transactions newer than the last BQ transaction ({latest_bq_date.date()}):")
-
-            # Display the new transactions in a data editor
-            edited_df = st.data_editor(
-                new_transactions,
-                column_config={
-                    "date": st.column_config.DateColumn(
-                        "date",
-                        format="YYYY-MM-DD"
-                    ),
-                    "category": st.column_config.SelectboxColumn(
-                        "category",
-                        help="The category of the app",
-                        width="medium",
-                        options=category_options,
-                        required=True,
-                    ),
-                    "label": st.column_config.TextColumn(
-                        "label",
-                        help="The subcategory (e.g. clean label for the keyword)",
-                        required=True,
-                    ),
-                },
-                hide_index=True,
-            )
-
-            if not edited_df.empty:
-                if st.button("💾 Save new transactions to BigQuery"):
-                    # Ensure date column is datetime.date
-                    edited_df["date"] = pd.to_datetime(edited_df["date"]).dt.date
-                    
-                    # Add derived fields expected in BQ table
-                    edited_df["account"] = account
-                    edited_df["year"] = pd.to_datetime(edited_df["date"]).dt.year
-                    edited_df["month"] = pd.to_datetime(edited_df["date"]).dt.to_period("M").astype(str)
-                    edited_df["transaction_type"] = edited_df.apply(processing.classify_transaction, axis=1)
-
-                    # Ensure transactions are sorted chronologically
-                    edited_df = edited_df.sort_values(by="date", ascending=True).reset_index(drop=True)
-
-                    # Get current max transaction_number for the account
-                    start_num = db_client.get_max_transaction_number(table_id, account)
-
-                    # Assign new transaction numbers sequentially
-                    edited_df["transaction_number"] = range(start_num + 1, start_num + 1 + len(edited_df))
-
-                    # Load into BigQuery
-                    db_client.insert_transactions(edited_df)
-
-                    st.success(f"🎉 Successfully inserted {len(edited_df)} rows into BigQuery")
-
-
-            if new_transactions.empty:
-                st.info("No new transactions found.")
-            else:
-                st.success(f"✅ Found {len(new_transactions)} new transactions.")
-        else:
-            st.warning("No transactions found in BigQuery. Keeping all CSV rows.")
-            new_transactions = df
+        
+        except Exception as e:
+            # View: Error handling
+            st.error(f"Error reading file: {e}") 
 
 # --- MODE 2: CATEGORIZE EXISTING ---
 elif mode == "🏷️ Categorize Existing":

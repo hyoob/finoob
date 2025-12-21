@@ -1,5 +1,10 @@
 import pandas as pd
 import numpy as np
+import json
+
+# --- Load account → bank mapping ---
+with open("accounts.json") as f:
+    account_map = json.load(f)
 
 # --- 1. Transaction Classifier ---
 def classify_transaction(row):
@@ -155,3 +160,88 @@ def get_changed_rows(original_df, edited_df, data_cols):
     df_to_upload = changed_rows[cols_to_check]
 
     return df_to_upload
+
+def categorize_transactions(df, categories):
+    # Categorize transactions based on matching rules
+    def categorize(description):
+        desc = str(description)
+        for cat, items in categories.items():
+            for item in items:
+                keyword = item["keyword"]
+                label = item["label"]
+                if keyword in desc:
+                    return pd.Series([cat, label])
+        return pd.Series(["", ""])
+
+    df[["category", "label"]] = df["description"].apply(categorize)
+
+def get_new_transactions(account, latest_bq_tx, df):
+    """
+    Return new transactions from uploaded df that are after the latest_bq_tx.
+    """
+    # Define values for latest transaction in BigQuery
+    bq_description = latest_bq_tx["description"]
+    bq_debit = float(latest_bq_tx.get("debit", 0))
+    bq_credit = float(latest_bq_tx.get("credit", 0))
+    bq_balance = float(latest_bq_tx.get("balance") or 0.0) # default to 0.0 if None
+    latest_bq_date = pd.to_datetime(latest_bq_tx["date"])
+    
+    # Apply normalizer to uploaded dataframe
+    bank = account_map[account]
+    handler = bank_handlers[bank]
+    df = handler["normalizer"](df)
+
+    # Sort df from oldest → newest by date 
+    df = df.sort_values(by="date", ascending=True).reset_index(drop=True)
+
+    # Find the marker row in uploaded CSV
+    mask = (
+        (df["date"] == latest_bq_date) &
+        (df["description"] == bq_description) &
+        (df["debit"] == bq_debit) &
+        (df["credit"] == bq_credit)
+    )
+
+    if mask.any():
+        marker_index = df[mask].index.max()  # last matching row
+        new_transactions = df.loc[marker_index+1:].copy()
+        # Keep only the required columns
+
+        # If account has no balance in CSV → calculate balance
+        if not handler["has_balance"]:
+            start_balance = bq_balance if bq_balance is not None else 0.0
+            new_transactions["balance"] = start_balance + (
+                new_transactions["credit"] - new_transactions["debit"]
+            ).cumsum()
+
+        new_transactions = new_transactions[[
+            "date",
+            "debit",
+            "credit",
+            "description",
+            "balance"
+        ]]
+
+        # Return new transactions and no warning message
+        return new_transactions, None, latest_bq_date
+    else:
+        # If not found, assume all CSV rows are new
+        # Return all rows and a warning message
+        warning_message = (
+            "⚠️ Could not find the last BQ transaction in the CSV. "
+            "Keeping all rows."
+        )
+        
+        return df, warning_message, latest_bq_date
+
+def load_transaction_file(uploaded_file, account):
+    """
+    Selects the correct handler based on the account and parses the file.
+    """
+    bank = account_map[account] 
+    handler = bank_handlers[bank]
+
+    # Read the file with the correct function & args
+    df = handler["reader"](uploaded_file, **handler["reader_kwargs"])
+    
+    return df
