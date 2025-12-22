@@ -3,12 +3,19 @@ import pandas as pd
 import numpy as np
 import json
 import queries
+import config
 from utils import processing, db_client
 
 # TODO: Move loading categories to processing.py
 # Load categories from JSON file.
 with open(st.secrets["categories_file"]["prod"], "r") as f:
     categories = json.load(f)
+
+# Get the path from Streamlit Secrets 
+categories_path = st.secrets["categories_file"]["prod"]
+
+# Get the category options list
+category_options = processing.load_category_options(categories_path)
 
 # --- Load account → bank mapping ---
 with open("accounts.json") as f:
@@ -130,28 +137,15 @@ if mode == "📥 Import Transactions":
                 processing.categorize_transactions(new_transactions, categories)
 
                 st.write(f"Transactions newer than the last BQ transaction ({latest_bq_date.date()}):")
-
+                
+                # Prepare column configuration with dynamic category options
+                column_cfg = config.TRANSACTION_COLUMN_CONFIG.copy()
+                column_cfg["category"] = config.get_category_column(category_options)
+                
                 # Display the new transactions in a data editor
                 edited_df = st.data_editor(
                     new_transactions,
-                    column_config={
-                        "date": st.column_config.DateColumn(
-                            "date",
-                            format="YYYY-MM-DD"
-                        ),
-                        "category": st.column_config.SelectboxColumn(
-                            "category",
-                            help="The category of the app",
-                            width="medium",
-                            options=category_options,
-                            required=True,
-                        ),
-                        "label": st.column_config.TextColumn(
-                            "label",
-                            help="The subcategory (e.g. clean label for the keyword)",
-                            required=True,
-                        ),
-                    },
+                    column_config=column_cfg,
                     hide_index=True,
                 )
 

@@ -231,7 +231,7 @@ def get_new_transactions(account, latest_bq_tx, df):
             "⚠️ Could not find the last BQ transaction in the CSV. "
             "Keeping all rows."
         )
-        
+
         return df, warning_message, latest_bq_date
 
 def load_transaction_file(uploaded_file, account):
@@ -245,3 +245,13 @@ def load_transaction_file(uploaded_file, account):
     df = handler["reader"](uploaded_file, **handler["reader_kwargs"])
     
     return df
+
+def load_category_options(filepath):
+    """
+    Reads the JSON file and returns the list of keys (categories).
+    """
+    with open(filepath, "r") as f:
+        categories = json.load(f)
+    
+    # Return the list of keys to be used as options
+    return list(categories.keys())
