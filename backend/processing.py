@@ -2,10 +2,6 @@ import pandas as pd
 import numpy as np
 import json
 
-# --- Load account → bank mapping ---
-with open("accounts.json") as f:
-    account_map = json.load(f)
-
 # --- 1. Transaction Classifier ---
 def classify_transaction(row):
     if row["debit"] != 0 and row["credit"] == 0:
@@ -71,7 +67,7 @@ def normalize_usbank(df):
     return df[["date", "debit", "credit", "description"]]
 
 # --- 3. Handlers Configuration ---
-bank_handlers = {
+BANK_HANDLERS = {
     "ptsb": {
         "reader": pd.read_excel,
         "reader_kwargs": {"header": 12, "skipfooter": 1},
@@ -175,7 +171,7 @@ def categorize_transactions(df, categories):
 
     df[["category", "label"]] = df["description"].apply(categorize)
 
-def get_new_transactions(account, latest_bq_tx, df):
+def get_new_transactions(account_map, account, latest_bq_tx, df):
     """
     Return new transactions from uploaded df that are after the latest_bq_tx.
     """
@@ -188,7 +184,7 @@ def get_new_transactions(account, latest_bq_tx, df):
     
     # Apply normalizer to uploaded dataframe
     bank = account_map[account]
-    handler = bank_handlers[bank]
+    handler = BANK_HANDLERS[bank]
     df = handler["normalizer"](df)
 
     # Sort df from oldest → newest by date 
@@ -234,12 +230,12 @@ def get_new_transactions(account, latest_bq_tx, df):
 
         return df, warning_message, latest_bq_date
 
-def load_transaction_file(uploaded_file, account):
+def load_transaction_file(account_map, uploaded_file, account):
     """
     Selects the correct handler based on the account and parses the file.
     """
     bank = account_map[account] 
-    handler = bank_handlers[bank]
+    handler = BANK_HANDLERS[bank]
 
     # Read the file with the correct function & args
     df = handler["reader"](uploaded_file, **handler["reader_kwargs"])
@@ -254,4 +250,9 @@ def load_category_options(filepath):
         categories = json.load(f)
     
     # Return the list of keys to be used as options
-    return list(categories.keys())
+    return categories
+
+def load_accounts(filepath="config_data/accounts.json"):
+    with open(filepath, "r") as f:
+        return json.load(f)
+    

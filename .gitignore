@@ -12,4 +12,4 @@ __pycache__/
 finoob-3e6282c0d80c.json
 
 # Categories prod file
-categories.json
+config_data/categories.json

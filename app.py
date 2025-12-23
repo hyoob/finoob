@@ -1,82 +1,22 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-import json
-import queries
+import backend.queries as queries
 import config
-from utils import processing, db_client
+import ui
+from backend import processing, db_client
 
-# TODO: Move loading categories to processing.py
-# Load categories from JSON file.
-with open(st.secrets["categories_file"]["prod"], "r") as f:
-    categories = json.load(f)
-
-# Get the path from Streamlit Secrets 
+# Get the category file path from Streamlit Secrets 
 categories_path = st.secrets["categories_file"]["prod"]
 
 # Get the category options list
-category_options = processing.load_category_options(categories_path)
+categories = processing.load_category_options(categories_path)
+category_options = list(categories.keys())
 
 # --- Load account → bank mapping ---
-with open("accounts.json") as f:
-    account_map = json.load(f)
+account_map = processing.load_accounts()
 
-# TODO: Move this to be fully handled in db_client
+# Get the BigQuery table ID (prod/dev based on env)
 table_id = db_client.get_table_id()
-
-def clear_session_state_data():
-    """Clears transactions from session state."""
-    if 'uncategorized_df' in st.session_state:
-        del st.session_state.uncategorized_df
-    if 'reimbursements_df' in st.session_state:
-        del st.session_state.reimbursements_df
-    # Optional: Clear the success/error message too
-    if 'status_message' in st.session_state:
-        st.session_state.status_message = None
-
-def pick_account(picker_message, key, on_change=None):
-    """
-    Helper function to pick account from dropdown.
-    Args:
-        picker_message (str): Label for the dropdown.
-        key (str): Unique ID for this widget (required when using multiple pickers).
-        on_change (callable): Function to run ONLY when the selection changes.
-    """
-    account_options = ["-- Select an account --"] + list(account_map.keys())    
-
-    # We pass the on_change function directly to Streamlit
-    account = st.selectbox(
-        picker_message, 
-        account_options, 
-        key=key, 
-        on_change=on_change
-    )
-
-    # Prevent continuing unless user has selected a real account
-    if account == "-- Select an account --":
-        st.warning("⚠️ Please select an account to continue.")
-        st.stop()
-
-    return account
-
-def display_status_message():
-    """Displays a persistent status message from session state."""
-    if 'status_message' in st.session_state and st.session_state.status_message:
-        # Check if it was an error or success to choose the color
-        if st.session_state.status_message.startswith("🎉"):
-            st.success(st.session_state.status_message)
-        else:
-            st.error(st.session_state.status_message)
-
-        # Clear the message so it doesn't show up again on the next action
-        st.session_state.status_message = None
-
-# Account → bank handler mapping
-account_handlers = {acc: processing.bank_handlers[bank] for acc, bank in account_map.items()}
-
-
-# Create a list of category options from the categories JSON
-category_options = list(categories.keys())
 
 # Streamlit app title
 if db_client.get_env() == "dev":
@@ -97,10 +37,11 @@ if mode == "📥 Import Transactions":
     st.header("📥 Import New Transactions")
 
     # Ask the user which account the uploaded file is for
-    account = pick_account(
+    account = ui.pick_account(
+        account_map,
         "Select the account for the file you want to upload:",
         key="import_account_picker",
-        on_change=clear_session_state_data
+        on_change=ui.clear_session_state_data
     )
 
     # File uploader
@@ -109,7 +50,7 @@ if mode == "📥 Import Transactions":
     if uploaded_file is not None:
         try: 
             # Load the uploaded file into a DataFrame
-            df = processing.load_transaction_file(uploaded_file, account)
+            df = processing.load_transaction_file(account_map, uploaded_file, account)
 
             st.success("File uploaded successfully!")
 
@@ -124,6 +65,7 @@ if mode == "📥 Import Transactions":
             if latest_bq_tx:
                 # Get new transactions after the latest BQ transaction
                 new_transactions, warning, latest_bq_date = processing.get_new_transactions(
+                    account_map,
                     account, 
                     latest_bq_tx, 
                     df
@@ -138,7 +80,7 @@ if mode == "📥 Import Transactions":
 
                 st.write(f"Transactions newer than the last BQ transaction ({latest_bq_date.date()}):")
                 
-                # Prepare column configuration with dynamic category options
+                # Prepare column configuration 
                 column_cfg = config.TRANSACTION_COLUMN_CONFIG.copy()
                 column_cfg["category"] = config.get_category_column(category_options)
                 
@@ -193,15 +135,16 @@ elif mode == "🏷️ Categorize Existing":
     st.header("🏷️ Categorize Existing Transactions")
 
     #CHECK FOR AND DISPLAY PERSISTENT STATUS MESSAGE 
-    display_status_message()
+    ui.display_status_message()
 
     st.write("Fetch a batch of uncategorized transactions from BigQuery to edit.")
 
     # Ask the user which account to fetch uncategorized transactions for
-    account = pick_account(
+    account = ui.pick_account(
+        account_map,
         "Select the account to fetch uncategorized transactions from:",
         key="categorize_account_picker",
-        on_change=clear_session_state_data
+        on_change=ui.clear_session_state_data
     )
 
     # Only show the "Fetch" button if data isn't already in session state
@@ -276,7 +219,7 @@ elif mode == "💰 Reimbursements":
     st.header("💰 Reimbursements")
 
     # CHECK FOR AND DISPLAY PERSISTENT STATUS MESSAGE 
-    display_status_message()
+    ui.display_status_message()
 
     # Use Streamlit Columns to create the Split Screen
     col1, col2 = st.columns(2)
@@ -286,10 +229,11 @@ elif mode == "💰 Reimbursements":
         st.subheader("1. Select Reimbursement")
         
         # 1. Account Picker
-        account_reimb = pick_account(
+        account_reimb = ui.pick_account(
+            account_map,
             "Account (Incoming):",
             key="reimb_account_picker",
-            on_change=clear_session_state_data
+            on_change=ui.clear_session_state_data
         )    
 
         # 2. Fetch Logic
@@ -323,7 +267,8 @@ elif mode == "💰 Reimbursements":
         st.subheader("2. Find Original Expense")
 
         # 1. Account Picker (Can be different from left side)
-        account_all = pick_account(
+        account_all = ui.pick_account(
+            account_map,
             "Account (Expense):",
             key="all_tx_picker", 
             # Note: No on_change here, so it doesn't clear the left side

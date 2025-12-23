@@ -2,7 +2,7 @@ import streamlit as st
 from google.oauth2 import service_account
 from google.cloud import bigquery
 from datetime import datetime, timezone
-import queries
+import backend.queries as queries
 
 # Set environment to production or development
 def get_env():
