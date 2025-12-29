@@ -18,6 +18,9 @@ account_map = processing.load_accounts()
 # Get the BigQuery table ID (prod/dev based on env)
 table_id = db_client.get_table_id()
 
+# Set Streamlit page configuration to wide layout
+st.set_page_config(layout="wide")
+
 # Streamlit app title
 if db_client.get_env() == "dev":
     st.markdown("# 🚀 Finoob :green[Development]")
