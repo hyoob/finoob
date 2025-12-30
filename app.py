@@ -52,36 +52,24 @@ if mode == "📥 Import Transactions":
 
     if uploaded_file is not None:
         try: 
-            # Load the uploaded file into a DataFrame
-            df = processing.load_transaction_file(account_map, uploaded_file, account)
+            # === FACADE 1: READ & PROCESS NEW TRANSACTIONS===
+            new_transactions, warning, latest_bq_date = processing.process_transaction_upload(
+                account_map, account, table_id, uploaded_file, categories
+            )
 
             st.success("File uploaded successfully!")
-
-            # Query the latest transaction from BigQuery for this account
-            rows = db_client.run_query(queries.get_latest_transaction_query(table_id, account))
-
-            if rows:
-                latest_bq_tx = rows[0]  # dict with fields from BQ
-            else:
-                latest_bq_tx = None
-
-            if latest_bq_tx:
-                # Get new transactions after the latest BQ transaction
-                new_transactions, warning, latest_bq_date = processing.get_new_transactions(
-                    account_map,
-                    account, 
-                    latest_bq_tx, 
-                    df
-                )
                 
-                # Check if a warning was returned and display it
-                if warning:
-                    st.warning(warning)
-                
-                # Categorize the new transactions
-                processing.categorize_transactions(new_transactions, categories)
+            # Check if a warning was returned and display it
+            if warning:
+                st.warning(warning)
+            
+            header_text = f"Transactions newer than ({latest_bq_date.date()}):" if latest_bq_date else "All transactions:"
+            st.write(header_text)
 
-                st.write(f"Transactions newer than the last BQ transaction ({latest_bq_date.date()}):")
+            if new_transactions.empty:
+                st.info("No new transactions found.")
+            else:    
+                st.success(f"✅ Found {len(new_transactions)} new transactions.")   
                 
                 # Prepare column configuration 
                 column_cfg = config.TRANSACTION_COLUMN_CONFIG.copy()
@@ -94,39 +82,13 @@ if mode == "📥 Import Transactions":
                     hide_index=True,
                 )
 
+                # === FACADE 2: SAVE NEW TRANSACTIONS ===
                 if not edited_df.empty:
                     if st.button("💾 Save new transactions to BigQuery"):
-                        # Ensure date column is datetime.date
-                        edited_df["date"] = pd.to_datetime(edited_df["date"]).dt.date
-                        
-                        # Add derived fields expected in BQ table
-                        edited_df["account"] = account
-                        edited_df["year"] = pd.to_datetime(edited_df["date"]).dt.year
-                        edited_df["month"] = pd.to_datetime(edited_df["date"]).dt.to_period("M").astype(str)
-                        edited_df["transaction_type"] = edited_df.apply(processing.classify_transaction, axis=1)
+                        # Pass the edited DataFrame to the save workflow
+                        count = processing.save_transactions_workflow(table_id, account, edited_df)
 
-                        # Ensure transactions are sorted chronologically
-                        edited_df = edited_df.sort_values(by="date", ascending=True).reset_index(drop=True)
-
-                        # Get current max transaction_number for the account
-                        start_num = db_client.get_max_transaction_number(table_id, account)
-
-                        # Assign new transaction numbers sequentially
-                        edited_df["transaction_number"] = range(start_num + 1, start_num + 1 + len(edited_df))
-
-                        # Load into BigQuery
-                        db_client.insert_transactions(edited_df)
-
-                        st.success(f"🎉 Successfully inserted {len(edited_df)} rows into BigQuery")
-
-
-                if new_transactions.empty:
-                    st.info("No new transactions found.")
-                else:
-                    st.success(f"✅ Found {len(new_transactions)} new transactions.")
-            else:
-                st.warning("No transactions found in BigQuery. Keeping all CSV rows.")
-                new_transactions = df
+                        st.success(f"🎉 Successfully inserted {count} rows into BigQuery")   
         
         except Exception as e:
             # View: Error handling
