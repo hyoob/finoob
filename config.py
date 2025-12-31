@@ -21,7 +21,7 @@ def get_categories_path():
 # --- BigQuery Configuration ---
 def get_table_id():
     try:
-        return st.secrets["bigquery"][ENV]
+        return st.secrets["bigquery_table"][ENV]
     except KeyError:
         st.error(f"🚨 CONFIG ERROR: The key '{ENV}' is missing from the [bigquery] section in secrets.toml.")
         st.stop()
