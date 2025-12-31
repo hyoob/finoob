@@ -5,8 +5,8 @@ import config
 import ui
 from backend import processing, db_client
 
-# Get the category file path from Streamlit Secrets 
-categories_path = st.secrets["categories_file"]["prod"]
+# Get the category file path from config 
+categories_path = config.get_categories_path()
 
 # Get the category options list
 categories = processing.load_category_options(categories_path)
@@ -15,14 +15,14 @@ category_options = list(categories.keys())
 # --- Load account → bank mapping ---
 account_map = processing.load_accounts()
 
-# Get the BigQuery table ID (prod/dev based on env)
-table_id = db_client.get_table_id()
+# Get the BigQuery table ID (prod vs dev table) from config
+table_id = config.get_table_id()
 
 # Set Streamlit page configuration to wide layout
 st.set_page_config(layout="wide")
 
 # Streamlit app title
-if db_client.get_env() == "dev":
+if config.ENV == "dev":
     st.markdown("# 🚀 Finoob :green[Development]")
 else:
     st.markdown("# 🚀 Finoob :red[Production]")
@@ -56,8 +56,6 @@ if mode == "📥 Import Transactions":
             new_transactions, warning, latest_bq_date = processing.process_transaction_upload(
                 account_map, account, table_id, uploaded_file, categories
             )
-
-            st.success("File uploaded successfully!")
                 
             # Check if a warning was returned and display it
             if warning:
@@ -173,7 +171,7 @@ elif mode == "🏷️ Categorize Existing":
             # 4. Only run the BQ update if there are actual changes
             if not df_to_upload.empty:
                 # Pass *only* the changed rows to your BQ function
-                db_client.run_update_logic(df_to_upload)
+                db_client.run_update_logic(df_to_upload, table_id)
             else:
                 # If no changes, just set a message and refresh
                 st.session_state.status_message = "No changes detected."
@@ -342,7 +340,7 @@ elif mode == "💰 Reimbursements":
 
         # --- 6. The Action Button ---
         if st.button("✅ Confirm & Append", type="primary"):
-            db_client.link_reimbursement_struct_array(reimb_row, expense_row)
+            db_client.link_reimbursement_struct_array(table_id, reimb_row, expense_row)
             st.rerun()
 
     elif len(r_selection) > 0:

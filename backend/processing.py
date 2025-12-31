@@ -311,7 +311,7 @@ def save_transactions_workflow(table_id, account, edited_df):
     edited_df["transaction_number"] = range(start_num + 1, start_num + 1 + len(edited_df))
 
     # Load into BigQuery
-    db_client.insert_transactions(edited_df)    
+    db_client.insert_transactions(table_id, edited_df)    
 
     return len(edited_df)
     

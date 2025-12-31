@@ -4,15 +4,6 @@ from google.cloud import bigquery
 from datetime import datetime, timezone
 import backend.queries as queries
 
-# Set environment to production or development
-def get_env():
-    # TODO: move "dev" to st.secrets for safety
-    return "dev" # Change to "dev" for development, "prod" for production
-
-def get_table_id():
-    env = get_env()
-    return st.secrets["bigquery_table"][env]
-
 @st.cache_resource
 def get_client():
     """
@@ -35,12 +26,11 @@ def run_query(query):
     rows = [dict(row) for row in rows_raw]
     return rows
 
-def run_update_logic(edited_df):
+def run_update_logic(edited_df, table_id):
     """
     Updates BQ table using a MERGE statement.
     """
     client = get_client()
-    table_id = get_table_id()
     
     st.info("Saving updates... please wait.")
     
@@ -90,12 +80,11 @@ def run_update_logic(edited_df):
         
         st.rerun()
 
-def link_reimbursement_struct_array(reimb_row, expense_row):
+def link_reimbursement_struct_array(table_id, reimb_row, expense_row):
     """
     Links a credit to a debit using the nested 'reimbursement' struct schema.
     """
     client = get_client()
-    table_id = get_table_id()
 
     try:
         r_id = reimb_row['transaction_number'] 
@@ -120,9 +109,8 @@ def link_reimbursement_struct_array(reimb_row, expense_row):
     except Exception as e:
         st.session_state.status_message = f"Error linking transactions: {e}"
 
-def insert_transactions(df):
+def insert_transactions(table_id, df):
     client = get_client()
-    table_id = get_table_id()
     # Add ingestion timestamp
     df["ingestion_timestamp"] = datetime.now(timezone.utc)
     job_config = bigquery.LoadJobConfig(write_disposition="WRITE_APPEND")
