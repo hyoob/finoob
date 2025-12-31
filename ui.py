@@ -46,3 +46,10 @@ def display_status_message():
 
         # Clear the message so it doesn't show up again on the next action
         st.session_state.status_message = None
+
+def display_title(env):
+    """Displays the app title with color coding based on environment."""
+    if env == "dev":
+        st.markdown("# 🚀 Finoob :green[Development]")
+    else:
+        st.markdown("# 🚀 Finoob :red[Production]")

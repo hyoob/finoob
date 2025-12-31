@@ -3,6 +3,7 @@ import numpy as np
 import json
 import backend.db_client as db_client
 import backend.queries as queries
+import streamlit as st # For caching
 
 # --- 1. Transaction Classifier ---
 def classify_transaction(row):
@@ -314,4 +315,16 @@ def save_transactions_workflow(table_id, account, edited_df):
     db_client.insert_transactions(table_id, edited_df)    
 
     return len(edited_df)
+
+@st.cache_data
+def load_app_context(categories_path):
+    """Loads all static data needed to start the app."""
+    # Load Categories
+    categories = load_category_options(categories_path)
+    category_options = list(categories.keys())
+
+    # Load accounts and map to banks
+    account_map = load_accounts()
+
+    return categories, category_options, account_map
     

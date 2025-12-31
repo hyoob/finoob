@@ -5,27 +5,17 @@ import config
 import ui
 from backend import processing, db_client
 
-# Get the category file path from config 
-categories_path = config.get_categories_path()
+# Set Streamlit page configuration to wide layout
+st.set_page_config(layout="wide", page_title="Finoob")
 
-# Get the category options list
-categories = processing.load_category_options(categories_path)
-category_options = list(categories.keys())
+# Display Header
+ui.display_title(config.ENV)
 
-# --- Load account → bank mapping ---
-account_map = processing.load_accounts()
+# Load App Data: categories, category options, account map
+categories, category_options, account_map = processing.load_app_context(config.get_categories_path())
 
 # Get the BigQuery table ID (prod vs dev table) from config
 table_id = config.get_table_id()
-
-# Set Streamlit page configuration to wide layout
-st.set_page_config(layout="wide")
-
-# Streamlit app title
-if config.ENV == "dev":
-    st.markdown("# 🚀 Finoob :green[Development]")
-else:
-    st.markdown("# 🚀 Finoob :red[Production]")
 
 # Sidebar for mode selection
 st.sidebar.header("Mode")
