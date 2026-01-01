@@ -104,64 +104,37 @@ elif mode == "🏷️ Categorize Existing":
     if 'uncategorized_df' not in st.session_state:
         if st.button("Fetch Uncategorized Transactions"):
             # Fetch transactions that are uncategorized
-            query = queries.get_uncategorized_transactions_query(table_id, account)
-            data = db_client.run_query(query)
-            if data:
+            df = processing.fetch_uncategorized_transactions(table_id, account)
+            if df is not None:
                 # Store fetched data in session state
-                st.session_state.uncategorized_df = pd.DataFrame(data)
+                st.session_state.uncategorized_df = df
             else:
                 st.info("No uncategorized transactions found! 🎉")
 
     # If data is in session state, display the editor
-    if 'uncategorized_df' in st.session_state and st.session_state.uncategorized_df is not None:
+    if 'uncategorized_df' in st.session_state:
         st.write("Edit the categories and labels below. Click 'Save' when done.")
-        
-        df_to_edit = st.session_state.uncategorized_df
+
+        # Get editor config from UI helper
+        editor_config = ui.get_editor_config(category_options)
         
         edited_df = st.data_editor(
-            df_to_edit,
-            column_config={
-                # Disable editing for identifier/data columns
-                "transaction_number": st.column_config.NumberColumn("ID", disabled=True),
-                "date": st.column_config.DateColumn("Date", format="YYYY-MM-DD", disabled=True),
-                "description": st.column_config.TextColumn("Description", disabled=True),
-                "debit": st.column_config.NumberColumn("Debit", format="€%.2f", disabled=True),
-                "credit": st.column_config.NumberColumn("Credit", format="€%.2f", disabled=True),
-                "account": st.column_config.TextColumn("Account", disabled=True),
-                
-                # Enable editing for category and label
-                "category": st.column_config.SelectboxColumn(
-                    "category",
-                    help="The category of the transaction",
-                    width="medium",
-                    options=category_options,
-                    required=False,
-                ),
-                "label": st.column_config.TextColumn(
-                    "label",
-                    help="The subcategory or label",
-                    required=False,
-                ),
-            },
+            st.session_state.uncategorized_df,
+            column_config=editor_config,
             hide_index=True,
         )
 
         if st.button("💾 Save Category Updates"):
-            # 1. Get the original DataFrame from session state
-            original_data = st.session_state.uncategorized_df
-            
-            # 2. Get the new DataFrame from the data editor
-            new_data = edited_df 
-            
-            # 3. Call the function to find *only* the changed rows
-            # Define which columns we care about for changes
-            data_cols = ['category', 'label']
-            df_to_upload = processing.get_changed_rows(original_data, new_data, data_cols)
-
-            # 4. Only run the BQ update if there are actual changes
-            if not df_to_upload.empty:
-                # Pass *only* the changed rows to your BQ function
-                db_client.run_update_logic(df_to_upload, table_id)
+            # Save the categorization updates
+            saved = processing.save_categorization_updates(
+                st.session_state.uncategorized_df, 
+                edited_df,
+                table_id
+            )
+            if saved:
+                st.session_state.status_message = "✅ Updates saved successfully!"
+                del st.session_state.uncategorized_df
+                st.rerun()
             else:
                 # If no changes, just set a message and refresh
                 st.session_state.status_message = "No changes detected."

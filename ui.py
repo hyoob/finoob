@@ -53,3 +53,29 @@ def display_title(env):
         st.markdown("# 🚀 Finoob :green[Development]")
     else:
         st.markdown("# 🚀 Finoob :red[Production]")
+
+def get_editor_config(category_options):
+    """Returns the column configuration for the categorization editor."""
+    return {
+        # Disable editing for identifier/data columns
+        "transaction_number": st.column_config.NumberColumn("ID", disabled=True),
+        "date": st.column_config.DateColumn("Date", format="YYYY-MM-DD", disabled=True),
+        "description": st.column_config.TextColumn("Description", disabled=True),
+        "debit": st.column_config.NumberColumn("Debit", format="€%.2f", disabled=True),
+        "credit": st.column_config.NumberColumn("Credit", format="€%.2f", disabled=True),
+        "account": st.column_config.TextColumn("Account", disabled=True),
+        
+        # Enable editing for category and label
+        "category": st.column_config.SelectboxColumn(
+            "category",
+            help="The category of the transaction",
+            width="medium",
+            options=category_options,
+            required=False,
+        ),
+        "label": st.column_config.TextColumn(
+            "label",
+            help="The subcategory or label",
+            required=False,
+        ),       
+    }
