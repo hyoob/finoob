@@ -406,3 +406,15 @@ def calculate_reimbursement_impact(reimb_row, expense_row):
 def link_reimbursement_to_expense(table_id, reimb_row, expense_row):
     """Facade for the write operation."""
     db_client.link_reimbursement_struct_array(table_id, reimb_row, expense_row)
+
+def filter_expenses(df, search_term):
+    """
+    Filters the expense dataframe based on the search term.
+    Used by both the UI (to display) and the Match Logic (to find the index).
+    """
+    if not search_term:
+        return df
+    
+    return df[
+        df['description'].str.contains(search_term, case=False, na=False)
+    ]

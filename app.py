@@ -1,9 +1,7 @@
 import streamlit as st
-import pandas as pd
-import backend.queries as queries
 import config
 import ui
-from backend import processing, db_client
+from backend import processing
 
 # Set Streamlit page configuration to wide layout
 st.set_page_config(layout="wide", page_title="Finoob")
@@ -60,8 +58,7 @@ if mode == "📥 Import Transactions":
                 st.success(f"✅ Found {len(new_transactions)} new transactions.")   
                 
                 # Prepare column configuration 
-                column_cfg = config.TRANSACTION_COLUMN_CONFIG.copy()
-                column_cfg["category"] = config.get_category_column(category_options)
+                column_cfg = ui.get_import_editor_config(category_options)
                 
                 # Display the new transactions in a data editor
                 edited_df = st.data_editor(
@@ -116,7 +113,7 @@ elif mode == "🏷️ Categorize Existing":
         st.write("Edit the categories and labels below. Click 'Save' when done.")
 
         # Get editor config from UI helper
-        editor_config = ui.get_editor_config(category_options)
+        editor_config = ui.get_categorization_editor_config(category_options)
         
         edited_df = st.data_editor(
             st.session_state.uncategorized_df,
@@ -153,8 +150,7 @@ elif mode == "💰 Reimbursements":
     # --- LEFT COLUMN: REIMBURSEMENTS (INCOMING MONEY) ---
     with col1:
         st.subheader("1. Select Reimbursement")
-        
-        # 1. Account Picker
+        # Account Picker
         account_reimb = ui.pick_account(
             account_map,
             "Account (Incoming):",
@@ -162,7 +158,7 @@ elif mode == "💰 Reimbursements":
             on_change=ui.clear_session_state_data
         )    
 
-        # 2. Fetch Logic
+        # Fetch Logic
         if st.button("Fetch Reimbursements", key="fetch_reimb"):
             df = processing.fetch_reimbursement_candidates(table_id, account_reimb)
             if df is not None:
@@ -170,7 +166,7 @@ elif mode == "💰 Reimbursements":
             else:
                 st.info("No reimbursements found.")
 
-        # 3. Display Dataframe with Selection
+        # Display Dataframe with Selection
         if 'reimbursements_df' in st.session_state:
             st.caption("Select one credit transaction:")
             
@@ -188,31 +184,26 @@ elif mode == "💰 Reimbursements":
     # --- RIGHT COLUMN: ALL TRANSACTIONS (EXPENSES) ---
     with col2:
         st.subheader("2. Find Original Expense")
-        # 1. Account Picker (Can be different from left side)
+        # Account Picker (Can be different from left side)
         account_all = ui.pick_account(
             # Note: No on_change here, so it doesn't clear the left side
             account_map, "Account (Expense):", key="all_tx_picker"
         )
 
-        # 2. Fetch Logic
+        # Fetch Logic
         if st.button("Fetch last 1000 expenses", key="fetch_all"):
             df = processing.fetch_expense_candidates(table_id, account_all)
             if df is not None:
                 st.session_state.all_tx_df = df
 
-        # 3. Display Dataframe with Search & Selection
+        # Display Dataframe with Search & Selection
         if 'all_tx_df' in st.session_state:
             st.caption("Select the expense it belongs to:")
             
             # Add a search filter
             search_term = st.text_input("🔍 Search Description", key="search_expense")
             
-            df_display = st.session_state.all_tx_df
-            
-            if search_term:
-                df_display = df_display[
-                    df_display['description'].str.contains(search_term, case=False, na=False)
-                ]
+            df_display = processing.filter_expenses(st.session_state.all_tx_df, search_term)
 
             st.dataframe(
                 df_display[['transaction_number', 'date', 'description', 'debit', 'category']],
@@ -225,19 +216,27 @@ elif mode == "💰 Reimbursements":
    # --- MATCHING LOGIC (BOTTOM SECTION) ---
     st.divider()
     
-    # 1. Capture Selection Indices from the UI
+    # Capture Selection Indices from the UI
     r_selection = st.session_state.get("reimb_grid", {}).get("selection", {}).get("rows", [])
     e_selection = st.session_state.get("expense_grid", {}).get("selection", {}).get("rows", [])
 
     # Only proceed if BOTH sides have a row selected
     if len(r_selection) > 0 and len(e_selection) > 0:
+        # Get Reimbursement Row
         reimb_row = st.session_state.reimbursements_df.iloc[r_selection[0]]
-        expense_row = df_display.iloc[e_selection[0]] # Using df_display ensures index matches selection
+
+        # Get the search term used in the UI
+        current_search = st.session_state.get("search_expense", "")
+        # Re-apply the EXACT same filter used in the display logic
+        filtered_view = processing.filter_expenses(st.session_state.all_tx_df, current_search)
+        
+        # Get Expense Row from the filtered view
+        expense_row = filtered_view.iloc[e_selection[0]]
 
         # Get reimbursement stats for context
         stats = processing.calculate_reimbursement_impact(reimb_row, expense_row)
 
-        # --- 5. Display the Context Card ---
+        # --- Display the Context Card ---
         st.markdown(f"### 🔗 Add to Reimbursement List?")
         
         # Show specific description to verify we have the right row
@@ -254,7 +253,7 @@ elif mode == "💰 Reimbursements":
         m2.metric("New Reimbursement", f"€{stats['new_amt']:.2f}")
         m3.metric("Final Net Cost", f"€{stats['final_net']:.2f}", delta=f"-€{stats['new_amt']:.2f}")
 
-        # --- 6. The Action Button ---
+        # --- The Action Button ---
         if st.button("✅ Confirm & Append", type="primary"):
             processing.link_reimbursement_to_expense(table_id, reimb_row, expense_row)
             st.session_state.status_message = "🎉 Reimbursement linked successfully!"

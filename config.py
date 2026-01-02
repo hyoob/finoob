@@ -25,26 +25,3 @@ def get_table_id():
     except KeyError:
         st.error(f"🚨 CONFIG ERROR: The key '{ENV}' is missing from the [bigquery] section in secrets.toml.")
         st.stop()
-
-# Helper function to generate the column with dynamic options
-def get_category_column(options):
-    return st.column_config.SelectboxColumn(
-        "category",
-        help="The category of the transaction",
-        width="medium",
-        options=options,
-        required=True,
-    )
-
-# Column configurations for the transaction table
-TRANSACTION_COLUMN_CONFIG = {
-    "date": st.column_config.DateColumn(
-        "date",
-        format="YYYY-MM-DD"
-    ),
-    "label": st.column_config.TextColumn(
-        "label",
-        help="The subcategory of the transaction",
-        required=True,
-    )
-}

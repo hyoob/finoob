@@ -54,7 +54,7 @@ def display_title(env):
     else:
         st.markdown("# 🚀 Finoob :red[Production]")
 
-def get_editor_config(category_options):
+def get_categorization_editor_config(category_options):
     """Returns the column configuration for the categorization editor."""
     return {
         # Disable editing for identifier/data columns
@@ -78,4 +78,28 @@ def get_editor_config(category_options):
             help="The subcategory or label",
             required=False,
         ),       
+    }
+
+def get_import_editor_config(category_options):
+    """
+    Returns config for MODE 1: Import Transactions.
+    Shows Date/Label/Category.
+    """
+    return {
+        "date": st.column_config.DateColumn(
+            "date",
+            format="YYYY-MM-DD"
+        ),
+        "label": st.column_config.TextColumn(
+            "label",
+            help="The subcategory of the transaction",
+            required=True,
+        ),
+        "category": st.column_config.SelectboxColumn(
+            "category",
+            help="The category of the transaction",
+            width="medium",
+            options=category_options,
+            required=True,
+        )
     }
