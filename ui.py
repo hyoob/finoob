@@ -1,4 +1,6 @@
 import streamlit as st
+import config
+from backend import processing
 
 def clear_session_state_data():
     """Clears transactions from session state."""
@@ -103,3 +105,31 @@ def get_import_editor_config(category_options):
             required=True,
         )
     }
+
+def init_page(page_title_suffix=None, load_data=True):
+    """
+    Standard header for all pages.
+    1. Sets page config (Browser tab title, layout)
+    2. Displays the visual App Title (Dev/Prod)
+    3. Loads and returns the shared app context data
+    """
+    # 1. Page Config
+    # If a specific page title is given, append it (e.g., "Finoob - Import")
+    browser_title = "Finoob"
+    if page_title_suffix:
+        browser_title += f" - {page_title_suffix}"
+        
+    st.set_page_config(layout="wide", page_title=browser_title)
+
+    # 2. Visual Header
+    display_title(config.ENV)
+
+    # 3. Load Data Context
+    # We return these so the page can use them immediately
+    if load_data:
+        categories, category_options, account_map = processing.load_app_context(config.get_categories_path())
+        table_id = config.get_table_id()
+        return categories, category_options, account_map, table_id
+    
+    # If not loading data, we return nothing (None)
+    return None
