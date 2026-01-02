@@ -164,10 +164,9 @@ elif mode == "💰 Reimbursements":
 
         # 2. Fetch Logic
         if st.button("Fetch Reimbursements", key="fetch_reimb"):
-            query = queries.get_reimbursement_transactions_query(table_id, account_reimb)
-            data = db_client.run_query(query)
-            if data:
-                st.session_state.reimbursements_df = pd.DataFrame(data)
+            df = processing.fetch_reimbursement_candidates(table_id, account_reimb)
+            if df is not None:
+                st.session_state.reimbursements_df = df
             else:
                 st.info("No reimbursements found.")
 
@@ -175,37 +174,31 @@ elif mode == "💰 Reimbursements":
         if 'reimbursements_df' in st.session_state:
             st.caption("Select one credit transaction:")
             
-            # Filter cols for cleaner view
-            view_df = st.session_state.reimbursements_df[
-                ['transaction_number', 'date', 'description', 'credit', 'to_transaction_id']
-            ]
-            
-            event_reimb = st.dataframe(
-                view_df,
+            st.dataframe(
+                # Filter cols for cleaner view
+                st.session_state.reimbursements_df[[
+                    'transaction_number', 'date', 'description', 'credit', 'to_transaction_id'
+                ]],
                 hide_index=True,
-                selection_mode="single-row", # 👈 Critical for matching
-                on_select="rerun",           # 👈 Triggers the match logic immediately
+                selection_mode="single-row", # Critical for matching
+                on_select="rerun",           # Triggers the match logic immediately
                 key="reimb_grid"
             )
 
     # --- RIGHT COLUMN: ALL TRANSACTIONS (EXPENSES) ---
     with col2:
         st.subheader("2. Find Original Expense")
-
         # 1. Account Picker (Can be different from left side)
         account_all = ui.pick_account(
-            account_map,
-            "Account (Expense):",
-            key="all_tx_picker", 
             # Note: No on_change here, so it doesn't clear the left side
+            account_map, "Account (Expense):", key="all_tx_picker"
         )
 
         # 2. Fetch Logic
         if st.button("Fetch last 1000 expenses", key="fetch_all"):
-            query = queries.get_all_expenses_query(table_id, account_all)
-            data = db_client.run_query(query)
-            if data:
-                st.session_state.all_tx_df = pd.DataFrame(data)
+            df = processing.fetch_expense_candidates(table_id, account_all)
+            if df is not None:
+                st.session_state.all_tx_df = df
 
         # 3. Display Dataframe with Search & Selection
         if 'all_tx_df' in st.session_state:
@@ -215,12 +208,13 @@ elif mode == "💰 Reimbursements":
             search_term = st.text_input("🔍 Search Description", key="search_expense")
             
             df_display = st.session_state.all_tx_df
+            
             if search_term:
                 df_display = df_display[
                     df_display['description'].str.contains(search_term, case=False, na=False)
                 ]
 
-            event_expense = st.dataframe(
+            st.dataframe(
                 df_display[['transaction_number', 'date', 'description', 'debit', 'category']],
                 hide_index=True,
                 selection_mode="single-row",
@@ -237,55 +231,11 @@ elif mode == "💰 Reimbursements":
 
     # Only proceed if BOTH sides have a row selected
     if len(r_selection) > 0 and len(e_selection) > 0:
-        
-        # --- 2. Extract the Reimbursement Row (Left Side) ---
-        if 'reimbursements_df' in st.session_state:
-            # Note: Since the left side is not filtered by a search box, 
-            # grabbing directly is usually fine. 
-            reimb_row = st.session_state.reimbursements_df.iloc[r_selection[0]]
-        else:
-            st.error("Reimbursement data lost. Please click Fetch again.")
-            st.stop()
+        reimb_row = st.session_state.reimbursements_df.iloc[r_selection[0]]
+        expense_row = df_display.iloc[e_selection[0]] # Using df_display ensures index matches selection
 
-        # --- 3. Extract the Expense Row (Right Side) 
-        if 'all_tx_df' in st.session_state:
-            # 1. Get the original full dataframe
-            full_expense_df = st.session_state.all_tx_df
-            
-            # 2. Get the search term used in the UI
-            search_term = st.session_state.get("search_expense", "")
-            
-            # 3. Re-apply the EXACT same filter used in the display logic
-            if search_term:
-                filtered_df = full_expense_df[
-                    full_expense_df['description'].str.contains(search_term, case=False, na=False)
-                ]
-            else:
-                filtered_df = full_expense_df
-
-            # 4. Now use the selection index on the FILTERED dataframe
-            expense_row = filtered_df.iloc[e_selection[0]]
-            
-        else:
-            st.error("Expense data lost. Please fetch transactions again.")
-            st.stop()
-
-        # --- 4. Calculate Math & Peek into Nested Data ---
-        new_reimb_amt = float(reimb_row['credit'])
-        current_net_debit = float(expense_row['debit'])
-        final_net_debit = current_net_debit - new_reimb_amt
-
-        # Logic to read the Nested Struct + Array
-        existing_count = 0
-        existing_sum = 0.0
-        
-        reimb_struct = expense_row.get('reimbursement')
-        
-        if isinstance(reimb_struct, dict):
-            r_list = reimb_struct.get('reimbursement_list')
-            if isinstance(r_list, list) and len(r_list) > 0:
-                existing_count = len(r_list)
-                existing_sum = sum(float(item.get('amount', 0)) for item in r_list)
+        # Get reimbursement stats for context
+        stats = processing.calculate_reimbursement_impact(reimb_row, expense_row)
 
         # --- 5. Display the Context Card ---
         st.markdown(f"### 🔗 Add to Reimbursement List?")
@@ -293,17 +243,21 @@ elif mode == "💰 Reimbursements":
         # Show specific description to verify we have the right row
         st.caption(f"Linking Credit: **{reimb_row['description']}** → Expense: **{expense_row['description']}**")
 
-        if existing_count > 0:
-             st.info(f"ℹ️ This expense already has **{existing_count}** previous reimbursement(s) totaling **€{existing_sum:.2f}**.")
+        if stats["existing_count"] > 0:
+            st.info(
+                f"ℹ️ This expense already has **{stats['existing_count']}** "
+                f"previous reimbursement(s) totaling **€{stats['existing_sum']:.2f}**."
+            )
 
         m1, m2, m3 = st.columns(3)
-        m1.metric("Current Net Cost", f"€{current_net_debit:.2f}")
-        m2.metric("New Reimbursement", f"€{new_reimb_amt:.2f}")
-        m3.metric("Final Net Cost", f"€{final_net_debit:.2f}", delta=f"-€{new_reimb_amt:.2f}")
+        m1.metric("Current Net Cost", f"€{stats['current_net']:.2f}")
+        m2.metric("New Reimbursement", f"€{stats['new_amt']:.2f}")
+        m3.metric("Final Net Cost", f"€{stats['final_net']:.2f}", delta=f"-€{stats['new_amt']:.2f}")
 
         # --- 6. The Action Button ---
         if st.button("✅ Confirm & Append", type="primary"):
-            db_client.link_reimbursement_struct_array(table_id, reimb_row, expense_row)
+            processing.link_reimbursement_to_expense(table_id, reimb_row, expense_row)
+            st.session_state.status_message = "🎉 Reimbursement linked successfully!"
             st.rerun()
 
     elif len(r_selection) > 0:
