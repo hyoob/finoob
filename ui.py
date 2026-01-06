@@ -133,3 +133,20 @@ def init_page(page_title_suffix=None, load_data=True):
     
     # If not loading data, we return nothing (None)
     return None
+
+# ui.py
+
+def get_keywords_editor_config():
+    """Returns the config for the Keywords Management editor."""
+    return {
+        "keyword": st.column_config.TextColumn(
+            "Keyword in Bank Statement",
+            help="Text to search for (e.g., 'NETFLIX')",
+            required=True
+        ),
+        "label": st.column_config.TextColumn(
+            "Clean Label",
+            help="What it should be renamed to (e.g., 'Netflix Subscription')",
+            required=True
+        )
+    }

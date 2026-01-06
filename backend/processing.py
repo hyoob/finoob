@@ -418,3 +418,93 @@ def filter_expenses(df, search_term):
     return df[
         df['description'].str.contains(search_term, case=False, na=False)
     ]
+
+def save_category_data(file_path, data):
+    """
+    Writes the category dictionary back to the JSON file.
+    Args:
+        file_path (str): Path to categories.json
+        data (dict): The complete dictionary of categories and keywords
+    """
+    try:
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=4)
+        return True
+    except Exception as e:
+        st.error(f"Error saving file: {e}")
+        return False
+
+def prepare_keywords_dataframe(data_list):
+    """
+    Transforms a list of keyword dictionaries into a sorted DataFrame.
+    Handles empty lists and sorting logic (ignoring case/whitespace).
+    """
+    df = pd.DataFrame(data_list)
+
+    # 1. Handle Empty Case
+    if df.empty:
+        return pd.DataFrame(columns=["keyword", "label"])
+    
+    # 2. Apply Sorting Logic
+    # We strip whitespace and lowercase just for the sort key
+    df.sort_values(
+        by="keyword",
+        key=lambda col: col.str.strip().str.lower()
+    )
+
+    # We use the current range index as a stable ID for this session
+    df['_id'] = range(len(df))
+
+    return df
+
+import pandas as pd
+import numpy as np # Needed for NaN checks
+
+def prepare_keywords_dataframe(data_list):
+    """
+    Simple converter: List of Dicts -> DataFrame.
+    NO sorting, NO hidden IDs. Just data.
+    """
+    if not data_list:
+        return pd.DataFrame(columns=["keyword", "label"])
+    return pd.DataFrame(data_list)
+
+def get_changes_summary(old_list, new_list):
+    """
+    Compares two lists of dicts using 'keyword' as the anchor.
+    """
+    # Convert to DFs and set 'keyword' as the index for comparison
+    df_old = pd.DataFrame(old_list)
+    df_new = pd.DataFrame(new_list)
+    
+    # Handle empty cases safely
+    if df_old.empty and df_new.empty: return None
+    if df_old.empty: return f"➕ {len(df_new)} added"
+    if df_new.empty: return f"➖ {len(df_old)} deleted"
+
+    # Set Index to 'keyword' so we compare "Netflix" to "Netflix"
+    # regardless of where it is in the list.
+    df_old = df_old.set_index("keyword")
+    df_new = df_new.set_index("keyword")
+
+    old_keys = set(df_old.index)
+    new_keys = set(df_new.index)
+
+    # 1. Added & Deleted
+    added = len(new_keys - old_keys)
+    deleted = len(old_keys - new_keys)
+
+    # 2. Modified (Same keyword, different label)
+    common_keys = old_keys.intersection(new_keys)
+    modified = 0
+    for k in common_keys:
+        if df_old.loc[k, "label"] != df_new.loc[k, "label"]:
+            modified += 1
+
+    # Build Message
+    parts = []
+    if added: parts.append(f"➕ {added} added")
+    if deleted: parts.append(f"➖ {deleted} deleted")
+    if modified: parts.append(f"✏️ {modified} modified")
+
+    return ", ".join(parts) if parts else None
