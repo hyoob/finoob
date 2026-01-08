@@ -55,6 +55,15 @@ if uploaded_file is not None:
                     count = processing.save_transactions_workflow(table_id, account, edited_df)
 
                     st.success(f"🎉 Successfully inserted {count} rows into BigQuery")   
+
+                    # Update the net worth table
+                    with st.spinner("Running calculations in BigQuery... please wait"):
+                        update_success, error_msg = processing.run_net_worth_update()
+
+                    if update_success:
+                        st.toast("✅ Net Worth table refreshed successfully!", icon='🎉')
+                    else:
+                        st.error(f"🚨 Net worth table update failed: {error_msg}")
     
     except Exception as e:
         # View: Error handling

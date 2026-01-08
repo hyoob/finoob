@@ -4,6 +4,7 @@ import json
 import backend.db_client as db_client
 import backend.queries as queries
 import streamlit as st # For caching
+import config
 
 # --- 1. Transaction Classifier ---
 def classify_transaction(row):
@@ -508,3 +509,9 @@ def get_changes_summary(old_list, new_list):
     if modified: parts.append(f"✏️ {modified} modified")
 
     return ", ".join(parts) if parts else None
+
+def run_net_worth_update():
+    """
+    Facade for running the create_networth_table procedure in BigQuery.
+    """
+    return db_client.execute_procedure(config.NET_WORTH_PROCEDURE)

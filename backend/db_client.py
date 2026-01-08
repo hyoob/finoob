@@ -4,6 +4,12 @@ from google.cloud import bigquery
 from datetime import datetime, timezone
 import backend.queries as queries
 
+# Define the scopes required
+SCOPES = [
+    "https://www.googleapis.com/auth/bigquery",
+    "https://www.googleapis.com/auth/drive"  
+]
+
 @st.cache_resource
 def get_client():
     """
@@ -11,7 +17,8 @@ def get_client():
     Using cache_resource ensures we don't reconnect on every rerun.
     """
     credentials = service_account.Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"]
+        st.secrets["gcp_service_account"],
+        scopes=SCOPES
     )
     return bigquery.Client(credentials=credentials)
 
@@ -125,3 +132,18 @@ def get_max_transaction_number(table_id, account):
     row = list(result)[0]
     current_max = row["max_num"] if row["max_num"] is not None else 0
     return current_max
+
+def execute_procedure(procedure_id):
+    """
+    Executes a stored procedure in BigQuery.
+    Returns: (bool, str) -> (Success?, Error Message if any)
+    """
+    client = get_client()
+    query = f"CALL `{procedure_id}`();"
+    
+    try:
+        job = client.query(query)
+        job.result()  # Wait for completion
+        return True, None
+    except Exception as e:
+        return False, str(e)

@@ -12,6 +12,11 @@ if ENV not in ["dev", "prod"]:
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CATEGORIES_PATH = os.path.join(BASE_DIR, "config_data", "categories.json")
 
+# --- BigQuery Configuration ---
+BQ_PROJECT_ID = st.secrets["gcp_service_account"]["project_id"]
+NET_WORTH_DATASET_ID = "assets"
+NET_WORTH_PROCEDURE = f"{BQ_PROJECT_ID}.{NET_WORTH_DATASET_ID}.create_networth_table"
+
 def get_categories_path():
     if os.path.exists(CATEGORIES_PATH):
         return CATEGORIES_PATH
