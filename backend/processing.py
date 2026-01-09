@@ -256,9 +256,21 @@ def load_category_options(filepath):
     # Return the list of keys to be used as options
     return categories
 
-def load_accounts(filepath="config_data/accounts.json"):
+def load_accounts(filepath=config.ACCOUNTS_PATH):
     with open(filepath, "r") as f:
-        return json.load(f)
+        data = json.load(f)
+
+        # ADAPTER LOGIC:
+        # Convert new format to legacy format
+        legacy_map = {}
+        for _, details in data.items():
+            name = details.get("account_name")
+            bank = details.get("bank")
+            
+            if name and bank:
+                legacy_map[name] = bank
+                
+        return legacy_map
 
 def process_transaction_upload(account_map, account, table_id, uploaded_file, categories):
     """Facade 1: Handles the READ workflow (File -> DB Check -> New Data)."""

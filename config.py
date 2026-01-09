@@ -11,6 +11,7 @@ if ENV not in ["dev", "prod"]:
 # --- File Paths --- 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CATEGORIES_PATH = os.path.join(BASE_DIR, "config_data", "categories.json")
+ACCOUNTS_PATH = os.path.join(BASE_DIR, "config_data", "accounts.json")
 
 # --- BigQuery Configuration ---
 BQ_PROJECT_ID = st.secrets["gcp_service_account"]["project_id"]
