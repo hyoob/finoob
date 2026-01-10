@@ -134,8 +134,6 @@ def init_page(page_title_suffix=None, load_data=True):
     # If not loading data, we return nothing (None)
     return None
 
-# ui.py
-
 def get_keywords_editor_config():
     """Returns the config for the Keywords Management editor."""
     return {
@@ -150,3 +148,70 @@ def get_keywords_editor_config():
             required=True
         )
     }
+
+def get_accounts_table_config():
+    """
+    Returns the column configuration for the accounts table.
+    """
+    return {
+        "account_name": st.column_config.TextColumn("Account Name", width="medium"),
+        "bank": st.column_config.TextColumn("Bank", width="small"),
+        "balance": st.column_config.NumberColumn(
+            "Balance",
+            width="small"
+        ),
+        "last_updated": st.column_config.DatetimeColumn(
+            "Last Updated",
+            format="YYYY-MM-DD, HH:mm:ss",
+            width="medium"
+        ),
+        "id": None  # Hide ID
+    }
+
+def render_net_worth(amount):
+    """Renders the top-level metric card."""
+    col1, col2 = st.columns([1, 3])
+    col1.metric("Total Net Worth", f"€{amount:,.2f}")
+    st.divider()
+
+def render_update_balance_form(accounts_df, current_balance_func):
+    """
+    Renders the form to update a balance.
+    Returns (clicked, selected_id, new_balance)
+    """
+    with st.expander("📝 Quick Update Balance"):
+        # Helper: Create dictionary for mapping Name -> ID
+        # (We use ID for logic, but Name for display)
+        name_map = dict(zip(accounts_df['id'], accounts_df['account_name']))
+        
+        c1, c2 = st.columns([2, 1])
+        
+        # Select Account (Returns ID)
+        selected_id = c1.selectbox(
+            "Select Account", 
+            options=accounts_df['id'], 
+            format_func=lambda x: name_map.get(x, x)
+        )
+        
+        # Get current balance for the selected account to pre-fill input
+        current_val = accounts_df.loc[accounts_df['id'] == selected_id, 'balance'].values[0]
+        
+        new_val = c2.number_input("New Balance", value=float(current_val))
+        
+        if st.button("Update Balance", type="primary"):
+            return True, selected_id, new_val
+            
+    return False, None, None
+
+def format_accounts_table(df):
+    """
+    Applies Pandas Styler formatting (e.g., commas for thousands).
+    Returns a Styler object.
+    """
+    # Check if df is empty to prevent errors, though style handles it well usually
+    if df.empty:
+        return df
+        
+    return df.style.format({
+        "balance": "€{:,.2f}"  # Adds commas: 1,234.56
+    })

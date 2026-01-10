@@ -5,6 +5,7 @@ import backend.db_client as db_client
 import backend.queries as queries
 import streamlit as st # For caching
 import config
+from datetime import datetime
 
 # --- 1. Transaction Classifier ---
 def classify_transaction(row):
@@ -527,3 +528,56 @@ def run_net_worth_update():
     Facade for running the create_networth_table procedure in BigQuery.
     """
     return db_client.execute_procedure(config.NET_WORTH_PROCEDURE)
+
+def load_accounts_db():
+    """Loads the raw accounts JSON file."""
+    with open(config.ACCOUNTS_PATH, "r") as f:
+        return json.load(f)
+
+def get_accounts_dataframe(show_archived=False):
+    """
+    Loads data and transforms it into a flat DataFrame for the UI.
+    """
+    data = load_accounts_db()
+    rows = []
+    for acc_id, details in data.items():
+        row = details.copy()
+        row['id'] = acc_id  # Keep ID for reference
+        rows.append(row)
+    
+    if not rows:
+        return pd.DataFrame(columns=["account_name", "bank", "balance", "last_updated", "id"])
+        
+    df = pd.DataFrame(rows)
+
+    # Filter out archived accounts unless specified
+    if not show_archived:
+        df = df[df["active"] == True]
+    
+    # --- Convert string to actual Datetime object ---
+    # errors='coerce' turns bad data into NaT (Not a Time) so the app doesn't crash
+    if "last_updated" in df.columns:
+        df["last_updated"] = pd.to_datetime(df["last_updated"], errors='coerce')
+    
+    return df
+
+def calculate_net_worth(df):
+    """Calculates total balance from the dataframe."""
+    if df.empty:
+        return 0.0
+    return df['balance'].sum()
+
+def update_account_balance(acc_id, new_balance):
+    """
+    Updates balance and timestamp for a specific account, then saves to disk.
+    """
+    data = load_accounts_db()
+    
+    if acc_id in data:
+        data[acc_id]['balance'] = float(new_balance)
+        data[acc_id]['last_updated'] = datetime.now().isoformat()
+        
+        with open(config.ACCOUNTS_PATH, "w") as f:
+            json.dump(data, f, indent=4)
+        return True
+    return False

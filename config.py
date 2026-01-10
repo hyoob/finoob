@@ -1,5 +1,6 @@
 import streamlit as st
 import os
+import shutil
 
 # --- Environment ---
 # Fetches 'env', defaulting to None. If it's not strictly 'dev' or 'prod', we stop.
@@ -11,7 +12,9 @@ if ENV not in ["dev", "prod"]:
 # --- File Paths --- 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CATEGORIES_PATH = os.path.join(BASE_DIR, "config_data", "categories.json")
+CATEGORIES_TEMPLATE_PATH = os.path.join(BASE_DIR, "config_data", "categories_example.json")
 ACCOUNTS_PATH = os.path.join(BASE_DIR, "config_data", "accounts.json")
+ACCOUNTS_TEMPLATE_PATH = os.path.join(BASE_DIR, "config_data", "accounts_example.json")
 
 # --- BigQuery Configuration ---
 BQ_PROJECT_ID = st.secrets["gcp_service_account"]["project_id"]
@@ -31,3 +34,30 @@ def get_table_id():
     except KeyError:
         st.error(f"🚨 CONFIG ERROR: The key '{ENV}' is missing from the [bigquery] section in secrets.toml.")
         st.stop()
+
+def ensure_data_files_exist():
+    """
+    Checks if sensitive files exist. If not, creates them from templates.
+    """
+    # 1. Check Accounts
+    if not os.path.exists(ACCOUNTS_PATH):
+        print(f"⚠️ {ACCOUNTS_PATH} not found. Creating from template...")
+        if os.path.exists(ACCOUNTS_TEMPLATE_PATH):
+            shutil.copy(ACCOUNTS_TEMPLATE_PATH, ACCOUNTS_PATH)
+        else:
+            # Fallback if template is missing too
+            with open(ACCOUNTS_PATH, "w") as f:
+                f.write("{}")
+
+    # 2. Check Categories
+    if not os.path.exists(CATEGORIES_PATH):
+        print(f"⚠️ {CATEGORIES_PATH} not found. Creating from template...")
+        if os.path.exists(CATEGORIES_TEMPLATE_PATH):
+            shutil.copy(CATEGORIES_TEMPLATE_PATH, CATEGORIES_PATH)
+        else:
+            # Fallback: Create empty valid JSON
+            with open(CATEGORIES_PATH, "w") as f:
+                f.write("{}")
+
+# On module load, ensure data files exist
+ensure_data_files_exist()
