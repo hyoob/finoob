@@ -1,0 +1,16 @@
+{
+    "acc_01": {
+        "account_name": "Example Bank Checking",
+        "bank": "generic_bank",
+        "balance": 0.0,
+        "last_updated": null,
+        "active": true
+    },
+    "acc_02": {
+        "account_name": "Example Credit Card",
+        "bank": "generic_bank",
+        "balance": 0.0,
+        "last_updated": null,
+        "active": true
+    }
+}

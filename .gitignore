@@ -13,3 +13,6 @@ finoob-3e6282c0d80c.json
 
 # Categories prod file
 config_data/categories.json
+
+# Ignore sensitive financial data
+config_data/accounts.json
