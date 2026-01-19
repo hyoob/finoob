@@ -1,10 +1,12 @@
 import streamlit as st
 import ui
-from backend import processing
+from backend.services import app_service, categorization_service
 
-# --- ONE-LINE INITIALIZATION ---
-# This sets the title, layout, and loads all your data variables
-categories, category_options, account_map, table_id = ui.init_page("Categorize")
+# This sets the title, layout
+ui.init_page("Categorize")
+
+# loads all data variables
+categories, category_options, account_map, table_id = app_service.load_global_context()
 
 st.header("🏷️ Categorize Existing Transactions")
 
@@ -25,7 +27,7 @@ account = ui.pick_account(
 if 'uncategorized_df' not in st.session_state:
     if st.button("Fetch Uncategorized Transactions"):
         # Fetch transactions that are uncategorized
-        df = processing.fetch_uncategorized_transactions(table_id, account)
+        df = categorization_service.fetch_uncategorized_transactions(table_id, account)
         if df is not None:
             # Store fetched data in session state
             st.session_state.uncategorized_df = df
@@ -47,7 +49,7 @@ if 'uncategorized_df' in st.session_state:
 
     if st.button("💾 Save Category Updates"):
         # Save the categorization updates
-        saved = processing.save_categorization_updates(
+        saved = categorization_service.save_categorization_updates(
             st.session_state.uncategorized_df, 
             edited_df,
             table_id

@@ -2,7 +2,7 @@ import streamlit as st
 import ui
 
 # This sets the title & layout, without loading uneeded data variables
-ui.init_page("Home", load_data=False)
+ui.init_page("Home")
 
 st.title("👋 Welcome to Finoob")
 st.markdown("""

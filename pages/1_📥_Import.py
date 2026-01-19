@@ -1,10 +1,12 @@
 import streamlit as st
 import ui
-from backend import processing
+from backend.services import app_service, ingestion_service
 
-# --- ONE-LINE INITIALIZATION ---
-# This sets the title, layout, and loads all your data variables
-categories, category_options, account_map, table_id = ui.init_page("Import")
+# This sets the title, layout
+ui.init_page("Import")
+
+# loads all data variables
+categories, category_options, account_map, table_id = app_service.load_global_context()
 
 st.header("📥 Import New Transactions")
 
@@ -22,7 +24,7 @@ uploaded_file = st.file_uploader("Choose a CSV file", type=["csv","xls"])
 if uploaded_file is not None:
     try: 
         # === FACADE 1: READ & PROCESS NEW TRANSACTIONS===
-        new_transactions, warning, latest_bq_date = processing.process_transaction_upload(
+        new_transactions, warning, latest_bq_date = ingestion_service.process_transaction_upload(
             account_map, account, table_id, uploaded_file, categories
         )
             
@@ -52,18 +54,15 @@ if uploaded_file is not None:
             if not edited_df.empty:
                 if st.button("💾 Save new transactions to BigQuery"):
                     # Pass the edited DataFrame to the save workflow
-                    count = processing.save_transactions_workflow(table_id, account, edited_df)
-
-                    st.success(f"🎉 Successfully inserted {count} rows into BigQuery")   
-
-                    # Update the net worth table
-                    with st.spinner("Running calculations in BigQuery... please wait"):
-                        update_success, error_msg = processing.run_net_worth_update()
-
+                    with st.spinner("Saving transactions to BigQuery..."):
+                        # save to BigQuery and update net worth table
+                        count, update_success, error_msg = ingestion_service.save_transactions_workflow(
+                            table_id, account, edited_df
+                        )
                     if update_success:
-                        st.toast("✅ Net Worth table refreshed successfully!", icon='🎉')
+                        st.success(f"🎉 Successfully inserted {count} rows into BigQuery") 
                     else:
-                        st.error(f"🚨 Net worth table update failed: {error_msg}")
+                        st.error(f"🚨 Net worth table update failed: {error_msg}")  
     
     except Exception as e:
         # View: Error handling

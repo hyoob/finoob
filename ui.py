@@ -1,6 +1,5 @@
 import streamlit as st
 import config
-from backend import processing
 
 def clear_session_state_data():
     """Clears transactions from session state."""
@@ -106,7 +105,7 @@ def get_import_editor_config(category_options):
         )
     }
 
-def init_page(page_title_suffix=None, load_data=True):
+def init_page(page_title_suffix=None):
     """
     Standard header for all pages.
     1. Sets page config (Browser tab title, layout)
@@ -123,16 +122,6 @@ def init_page(page_title_suffix=None, load_data=True):
 
     # 2. Visual Header
     display_title(config.ENV)
-
-    # 3. Load Data Context
-    # We return these so the page can use them immediately
-    if load_data:
-        categories, category_options, account_map = processing.load_app_context(config.get_categories_path())
-        table_id = config.get_table_id()
-        return categories, category_options, account_map, table_id
-    
-    # If not loading data, we return nothing (None)
-    return None
 
 def get_keywords_editor_config():
     """Returns the config for the Keywords Management editor."""

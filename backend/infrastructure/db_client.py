@@ -2,7 +2,8 @@ import streamlit as st
 from google.oauth2 import service_account
 from google.cloud import bigquery
 from datetime import datetime, timezone
-import backend.queries as queries
+import backend.infrastructure.queries as queries
+import config
 
 # Define the scopes required
 SCOPES = [
@@ -147,3 +148,9 @@ def execute_procedure(procedure_id):
         return True, None
     except Exception as e:
         return False, str(e)
+
+def update_net_worth_table():
+    """
+    Facade for running the create_networth_table procedure in BigQuery.
+    """
+    return execute_procedure(config.NET_WORTH_PROCEDURE)

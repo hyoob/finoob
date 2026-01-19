@@ -1,17 +1,19 @@
 import streamlit as st
+from backend.domain import categorization_logic
+from backend.services import rules_service
 import ui
-import config
-from backend import processing
 import copy
+from backend.services import app_service
 
-# 1. Initialize Page (Load Data = True)
-# We get the initial 'categories' dict from the file here
-file_categories, _, _, _ = ui.init_page("Manage Categories")
-categories_path = config.get_categories_path()
+# This sets the title, layout
+ui.init_page("Manage Categories")
+
+# loads all data variables
+categories, category_options, account_map, table_id = app_service.load_global_context()
 
 # 2. Initialize Session State
 if 'manage_cats' not in st.session_state:
-    st.session_state.manage_cats = file_categories
+    st.session_state.manage_cats = categories
 
 # Create a Snapshot ONCE for comparison later (The "Clean" State)
 if "manage_cats_snapshot" not in st.session_state:
@@ -35,10 +37,12 @@ with st.expander("➕ Add New Category"):
                 # Create empty list for new category
                 st.session_state.manage_cats[new_cat_name] = []
                 # Save the message to Session State
-                processing.save_category_data(categories_path, st.session_state.manage_cats)
-                processing.load_app_context.clear()
-                st.session_state.pending_success = f"Added '{new_cat_name}' successfully!"
-                st.rerun()
+                success, message = rules_service.update_rules(st.session_state.manage_cats)
+                if success:
+                    st.session_state.pending_success = f"Added '{new_cat_name}' successfully!"
+                    st.rerun()
+                else:
+                    st.error(message)
 
 # --- SECTION 2.5: REMOVE CATEGORY ---
 with st.expander("🗑️ Remove Category"):
@@ -51,19 +55,15 @@ with st.expander("🗑️ Remove Category"):
     # Use type="primary" to make the button red/prominent
     if c2.button("Remove Category", type="primary"):
         if cat_to_remove:
-            # SAFETY CHECK: Prevent deleting the default category
-            if cat_to_remove == "Uncategorized":
-                st.error("You cannot delete the 'Uncategorized' category.")
-            else:
-                # 1. Update Session State (Remove key)
-                del st.session_state.manage_cats[cat_to_remove]
-                # 2. Save to File
-                # Note: Passing path FIRST, then data (as per your function def)
-                processing.save_category_data(categories_path, st.session_state.manage_cats)
-                # 4. Set Success Message
+            # 1. Update Session State (Remove key)
+            del st.session_state.manage_cats[cat_to_remove]
+            # 2. Save to File
+            success, message = rules_service.update_rules(st.session_state.manage_cats)
+            if success:
                 st.session_state.pending_success = f"Removed '{cat_to_remove}' successfully!"
-                # 5. Rerun
                 st.rerun()
+            else:
+                st.error(message)    
 
 # --- SECTION 3: EDIT KEYWORDS (REWRITTEN) ---
 st.header("📂 Manage Keywords")
@@ -81,13 +81,8 @@ if selected_cat:
         
         # Load raw data
         raw_data = st.session_state.manage_cats[selected_cat]
-        
-        # SORT ONCE HERE. Never sort again while editing.
-        df = processing.prepare_keywords_dataframe(raw_data)
-        if not df.empty and "keyword" in df.columns:
-            df = df.sort_values(by="keyword", key=lambda x: x.str.lower())
 
-        st.session_state.editor_df = df
+        st.session_state.editor_df = categorization_logic.prepare_keywords_dataframe(raw_data)
 
     # B. THE EDITOR
     # We bind the editor to 'editor_df'. Changes here update that variable automatically.
@@ -102,8 +97,9 @@ if selected_cat:
 
     # C. SYNC BACK (Update the 'Dirty' State)
     # Convert DF back to list and store in main session state
-    # This ensures if you switch categories, your edits are remembered in memory
-    st.session_state.manage_cats[selected_cat] = edited_df.to_dict("records")
+    # This ensures if we switch categories, your edits are remembered in memory
+    updated_list = categorization_logic.convert_df_to_keywords_list(edited_df)
+    st.session_state.manage_cats[selected_cat] = updated_list
 
 # --- SECTION 4: SAVE TO DISK ---
 st.divider()
@@ -116,12 +112,12 @@ if col1.button("💾 Save Changes", type="primary"):
         original = st.session_state.manage_cats_snapshot.get(selected_cat, [])
         current = st.session_state.manage_cats.get(selected_cat, [])
         
-        msg = processing.get_changes_summary(original, current)
+        msg = categorization_logic.get_keyword_changes_summary(original, current)
     else:
         msg = "Global Save" # Fallback if no category selected
 
     # 2. Save EVERYTHING to disk
-    success = processing.save_category_data(categories_path, st.session_state.manage_cats)
+    success = rules_service.update_rules(st.session_state.manage_cats)
 
     if success:
         # 3. Update Snapshot (Make the new state the clean state)
@@ -129,7 +125,6 @@ if col1.button("💾 Save Changes", type="primary"):
         
         # 4. Notify & Rerun
         st.session_state.pending_success = f"Saved! {msg if msg else ''}"
-        processing.load_app_context.clear()
         st.rerun()
     else:
         st.error("❌ Failed to save.")

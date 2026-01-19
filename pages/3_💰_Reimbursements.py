@@ -1,10 +1,13 @@
 import streamlit as st
 import ui
-from backend import processing
+from backend.domain import reimbursement_logic, transaction_logic
+from backend.services import app_service, reimbursement_service
 
-# --- ONE-LINE INITIALIZATION ---
-# This sets the title, layout, and loads all your data variables
-categories, category_options, account_map, table_id = ui.init_page("Reimbursements")
+# This sets the title, layout
+ui.init_page("Reimbursements")
+
+# loads all data variables
+categories, category_options, account_map, table_id = app_service.load_global_context()
 
 st.header("💰 Reimbursements")
 
@@ -27,7 +30,7 @@ with col1:
 
     # Fetch Logic
     if st.button("Fetch Reimbursements", key="fetch_reimb"):
-        df = processing.fetch_reimbursement_candidates(table_id, account_reimb)
+        df = reimbursement_service.fetch_reimbursement_candidates(table_id, account_reimb)
         if df is not None:
             st.session_state.reimbursements_df = df
         else:
@@ -59,7 +62,7 @@ with col2:
 
     # Fetch Logic
     if st.button("Fetch last 1000 expenses", key="fetch_all"):
-        df = processing.fetch_expense_candidates(table_id, account_all)
+        df = reimbursement_service.fetch_expense_candidates(table_id, account_all)
         if df is not None:
             st.session_state.all_tx_df = df
 
@@ -70,7 +73,7 @@ with col2:
         # Add a search filter
         search_term = st.text_input("🔍 Search Description", key="search_expense")
         
-        df_display = processing.filter_expenses(st.session_state.all_tx_df, search_term)
+        df_display = transaction_logic.filter_expenses(st.session_state.all_tx_df, search_term)
 
         st.dataframe(
             df_display[['transaction_number', 'date', 'description', 'debit', 'category']],
@@ -95,13 +98,13 @@ if len(r_selection) > 0 and len(e_selection) > 0:
     # Get the search term used in the UI
     current_search = st.session_state.get("search_expense", "")
     # Re-apply the EXACT same filter used in the display logic
-    filtered_view = processing.filter_expenses(st.session_state.all_tx_df, current_search)
+    filtered_view = transaction_logic.filter_expenses(st.session_state.all_tx_df, current_search)
     
     # Get Expense Row from the filtered view
     expense_row = filtered_view.iloc[e_selection[0]]
 
     # Get reimbursement stats for context
-    stats = processing.calculate_reimbursement_impact(reimb_row, expense_row)
+    stats = reimbursement_logic.calculate_reimbursement_impact(reimb_row, expense_row)
 
     # --- Display the Context Card ---
     st.markdown(f"### 🔗 Add to Reimbursement List?")
@@ -122,7 +125,8 @@ if len(r_selection) > 0 and len(e_selection) > 0:
 
     # --- The Action Button ---
     if st.button("✅ Confirm & Append", type="primary"):
-        processing.link_reimbursement_to_expense(table_id, reimb_row, expense_row)
+        with st.spinner("Processing reimbursement..."):
+            reimbursement_service.link_reimbursement_to_expense(table_id, reimb_row, expense_row)
         st.session_state.status_message = "🎉 Reimbursement linked successfully!"
         st.rerun()
 
