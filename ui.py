@@ -163,7 +163,7 @@ def render_net_worth(amount):
     col1.metric("Total Net Worth", f"€{amount:,.2f}")
     st.divider()
 
-def render_update_balance_form(accounts_df, current_balance_func):
+def render_update_balance_form(accounts_df):
     """
     Renders the form to update a balance.
     Returns (clicked, selected_id, new_balance)

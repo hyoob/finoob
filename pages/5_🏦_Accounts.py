@@ -31,7 +31,7 @@ st.dataframe(
 )
 
 # --- SECTION 3: UPDATE ACTION ---
-submitted, acc_id, new_balance = ui.render_update_balance_form(df, None)
+submitted, acc_id, new_balance = ui.render_update_balance_form(df)
 
 # TODO: persist success message across reruns
 if submitted:
