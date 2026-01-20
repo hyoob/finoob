@@ -19,12 +19,20 @@ def pick_account(account_map, picker_message, key, on_change=None):
         key (str): Unique ID for this widget (required when using multiple pickers).
         on_change (callable): Function to run ONLY when the selection changes.
     """
-    account_options = ["-- Select an account --"] + list(account_map.keys())    
+    PLACEHOLDER_ID = "-- Select an account --"
+    account_options = [PLACEHOLDER_ID] + list(account_map.keys())    
+
+    # 3. Define the formatter (Converts ID -> Readable Name)
+    def format_func(option_id):
+        if option_id == PLACEHOLDER_ID:
+            return "-- Select an account --"
+        return account_map.get(option_id, option_id)
 
     # We pass the on_change function directly to Streamlit
     account = st.selectbox(
         picker_message, 
-        account_options, 
+        options=account_options,
+        format_func=format_func, 
         key=key, 
         on_change=on_change
     )

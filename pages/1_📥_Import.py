@@ -1,3 +1,4 @@
+import traceback
 import streamlit as st
 import ui
 from backend.services import app_service, ingestion_service
@@ -24,10 +25,12 @@ uploaded_file = st.file_uploader("Choose a CSV file", type=["csv","xls"])
 if uploaded_file is not None:
     try: 
         # === FACADE 1: READ & PROCESS NEW TRANSACTIONS===
-        new_transactions, warning, latest_bq_date = ingestion_service.process_transaction_upload(
-            account_map, account, table_id, uploaded_file, categories
-        )
-            
+        try:
+            new_transactions, warning, latest_bq_date = ingestion_service.process_transaction_upload(
+                account_map, account, table_id, uploaded_file, categories
+            )
+        except Exception:
+            print(traceback.format_exc()) 
         # Check if a warning was returned and display it
         if warning:
             st.warning(warning)

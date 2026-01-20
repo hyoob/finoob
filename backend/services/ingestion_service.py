@@ -1,11 +1,30 @@
-from backend.infrastructure import parsers, db_client, queries
-from backend.domain import categorization_logic, transaction_logic
+import logging
+from backend.infrastructure import local_storage, parsers, db_client, queries
+from backend.domain import account_logic, categorization_logic, transaction_logic
 import pandas as pd
+import config
 
 def process_transaction_upload(account_map, account, table_id, uploaded_file, category_data):
     """Facade 1: Handles the READ workflow (File -> DB Check -> New Data)."""
+
+    account_data = local_storage.load_json_data(config.ACCOUNTS_PATH)
+
+    bank = account_logic.get_bank_from_account(account_data, account)
+
+    # 3. Get the strategy class from Registry
+    strategy_class = parsers.PARSER_REGISTRY.get(bank)
+    
+    if not strategy_class:
+        raise ValueError(f"No parser configured for bank type: '{bank}'")
+
+    # 4. Instantiate and Execute
+    # We instantiate here (strategy_class()) so each parse is fresh
+    parser = strategy_class()
+
     # Load the uploaded file into a DataFrame
-    df = parsers.load_transaction_file(account_map, uploaded_file, account)
+    df = parser.parse(uploaded_file)
+
+    print(f"Processed {len(df)} rows for {account}")
 
     # Query the latest transaction from BigQuery for this account
     rows = db_client.run_query(queries.get_latest_transaction_query(table_id, account)) 
@@ -37,11 +56,16 @@ def save_transactions_workflow(table_id, account, edited_df):
     Takes the dataframe from the UI, enriches it, and saves to BQ.
     """
     # TODO: Move logic to domain layer
+    # TODO: Consider using repository pattern for DB interactions
+
+    account_data = local_storage.load_json_data(config.ACCOUNTS_PATH)
+
     # Ensure date column is datetime.date
     edited_df["date"] = pd.to_datetime(edited_df["date"]).dt.date
     
     # Add derived fields expected in BQ table
-    edited_df["account"] = account
+    edited_df["account_id"] = account
+    edited_df["account"] = account_logic.get_account_name(account_data, account)
     edited_df["year"] = pd.to_datetime(edited_df["date"]).dt.year
     edited_df["month"] = pd.to_datetime(edited_df["date"]).dt.to_period("M").astype(str)
     edited_df["transaction_type"] = edited_df.apply(transaction_logic.classify_transaction, axis=1)

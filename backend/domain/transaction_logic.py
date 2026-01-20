@@ -13,11 +13,6 @@ def get_new_transactions(account_map, account, latest_bq_tx, df):
     bq_balance = float(latest_bq_tx.get("balance") or 0.0) # default to 0.0 if None
     latest_bq_date = pd.to_datetime(latest_bq_tx["date"])
     
-    # Apply normalizer to uploaded dataframe
-    bank = account_map[account]
-    handler = parsers.BANK_HANDLERS[bank]
-    df = handler["normalizer"](df)
-
     # Sort df from oldest → newest by date 
     df = df.sort_values(by="date", ascending=True).reset_index(drop=True)
 
@@ -35,7 +30,7 @@ def get_new_transactions(account_map, account, latest_bq_tx, df):
         # Keep only the required columns
 
         # If account has no balance in CSV → calculate balance
-        if not handler["has_balance"]:
+        if not "balance" in new_transactions.columns:
             start_balance = bq_balance if bq_balance is not None else 0.0
             new_transactions["balance"] = start_balance + (
                 new_transactions["credit"] - new_transactions["debit"]

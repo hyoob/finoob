@@ -1,18 +1,23 @@
 import pandas as pd
 from datetime import datetime
 
+from backend.infrastructure import local_storage
+import config
+
 def create_account_map(raw_data):
-        # ADAPTER LOGIC:
-        # Convert new format to legacy format
-        legacy_map = {}
-        for _, details in raw_data.items():
-            name = details.get("account_name")
-            bank = details.get("bank")
+    """
+    Creates a mapping of {Account_ID: Account_Name} for the UI to use.
+    Only includes active accounts.
+    """
+    id_name_map = {}
+    
+    for account_id, details in raw_data.items():
+        # Safety check: Only include active accounts that have a name
+        if details.get("active", False) and "account_name" in details:
+            name = details["account_name"]
+            id_name_map[account_id] = name
             
-            if name and bank:
-                legacy_map[name] = bank
-                
-        return legacy_map
+    return id_name_map
 
 def transform_to_dataframe(raw_data, show_archived):
     """
@@ -55,3 +60,13 @@ def calculate_total_balance(df):
     if df.empty:
         return 0.0
     return df['balance'].sum()
+
+def get_bank_from_account(account_data, account):
+    """Retrieves the bank name for a given account."""
+    bank = account_data.get(account, {}).get("bank", None)
+    return bank
+
+def get_account_name(account_data, account):
+    """Retrieves the account name for a given account."""
+    name = account_data.get(account, {}).get("account_name", None)
+    return name

@@ -15,7 +15,7 @@ def get_latest_transaction_query(table_id, account):
     return f"""
         SELECT *
         FROM `{table_id}`
-        WHERE account = '{account}'
+        WHERE account_id = '{account}'
         ORDER BY transaction_number DESC, date DESC
         LIMIT 1
     """
@@ -24,7 +24,7 @@ def get_max_transaction_id_query(table_id, account):
     return f"""
         SELECT MAX(transaction_number) as max_num
         FROM `{table_id}`
-        WHERE account = '{account}'
+        WHERE account_id = '{account}'
     """
 
 def get_uncategorized_transactions_query(table_id, account):
