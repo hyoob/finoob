@@ -162,12 +162,12 @@ def get_accounts_table_config():
             format="YYYY-MM-DD, HH:mm:ss",
             width="medium"
         ),
-        "id": None  # Hide ID
+        "account_id": None  # Hide ID
     }
 
 def render_net_worth(amount):
     """Renders the top-level metric card."""
-    col1, col2 = st.columns([1, 3])
+    col1, _ = st.columns([1, 3])
     col1.metric("Total Net Worth", f"€{amount:,.2f}")
     st.divider()
 
@@ -178,20 +178,20 @@ def render_update_balance_form(accounts_df):
     """
     with st.expander("📝 Quick Update Balance"):
         # Helper: Create dictionary for mapping Name -> ID
-        # (We use ID for logic, but Name for display)
-        name_map = dict(zip(accounts_df['id'], accounts_df['account_name']))
+        # (We use account ID for logic, but Name for display)
+        name_map = dict(zip(accounts_df['account_id'], accounts_df['account_name']))
         
         c1, c2 = st.columns([2, 1])
         
         # Select Account (Returns ID)
         selected_id = c1.selectbox(
             "Select Account", 
-            options=accounts_df['id'], 
+            options=accounts_df['account_id'], 
             format_func=lambda x: name_map.get(x, x)
         )
         
         # Get current balance for the selected account to pre-fill input
-        current_val = accounts_df.loc[accounts_df['id'] == selected_id, 'balance'].values[0]
+        current_val = accounts_df.loc[accounts_df['account_id'] == selected_id, 'balance'].values[0]
         
         new_val = c2.number_input("New Balance", value=float(current_val))
         

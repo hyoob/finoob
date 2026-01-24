@@ -1,15 +1,14 @@
-import logging
 from backend.infrastructure import local_storage, parsers, db_client, queries
 from backend.domain import account_logic, categorization_logic, transaction_logic
 import pandas as pd
 import config
 
-def process_transaction_upload(account_map, account, table_id, uploaded_file, category_data):
+def process_transaction_upload(account_map, account_id, table_id, uploaded_file, category_data):
     """Facade 1: Handles the READ workflow (File -> DB Check -> New Data)."""
 
     account_data = local_storage.load_json_data(config.ACCOUNTS_PATH)
 
-    bank = account_logic.get_bank_from_account(account_data, account)
+    bank = account_logic.get_bank_from_account(account_data, account_id)
 
     # 3. Get the strategy class from Registry
     strategy_class = parsers.PARSER_REGISTRY.get(bank)
@@ -24,18 +23,16 @@ def process_transaction_upload(account_map, account, table_id, uploaded_file, ca
     # Load the uploaded file into a DataFrame
     df = parser.parse(uploaded_file)
 
-    print(f"Processed {len(df)} rows for {account}")
+    print(f"Processed {len(df)} rows for {account_id}")
 
     # Query the latest transaction from BigQuery for this account
-    rows = db_client.run_query(queries.get_latest_transaction_query(table_id, account)) 
+    rows = db_client.run_query(queries.get_latest_transaction_query(table_id, account_id)) 
     
     latest_bq_tx = rows[0] if rows else None
 
     if latest_bq_tx:
         # Get new transactions after the latest BQ transaction
         new_transactions, warning, latest_bq_date = transaction_logic.get_new_transactions(
-            account_map,
-            account, 
             latest_bq_tx, 
             df
         )
@@ -50,7 +47,7 @@ def process_transaction_upload(account_map, account, table_id, uploaded_file, ca
     
     return new_transactions, warning, latest_bq_date
 
-def save_transactions_workflow(table_id, account, edited_df):
+def save_transactions_workflow(table_id, account_id, edited_df):
     """
     Facade 2: Handles the WRITE workflow.
     Takes the dataframe from the UI, enriches it, and saves to BQ.
@@ -64,8 +61,8 @@ def save_transactions_workflow(table_id, account, edited_df):
     edited_df["date"] = pd.to_datetime(edited_df["date"]).dt.date
     
     # Add derived fields expected in BQ table
-    edited_df["account_id"] = account
-    edited_df["account"] = account_logic.get_account_name(account_data, account)
+    edited_df["account_id"] = account_id
+    edited_df["account"] = account_logic.get_account_name(account_data, account_id)
     edited_df["year"] = pd.to_datetime(edited_df["date"]).dt.year
     edited_df["month"] = pd.to_datetime(edited_df["date"]).dt.to_period("M").astype(str)
     edited_df["transaction_type"] = edited_df.apply(transaction_logic.classify_transaction, axis=1)
@@ -74,8 +71,7 @@ def save_transactions_workflow(table_id, account, edited_df):
     edited_df = edited_df.sort_values(by="date", ascending=True).reset_index(drop=True)
 
     # Get current max transaction_number for the account
-    start_num = db_client.get_max_transaction_number(table_id, account)
-
+    start_num = db_client.get_max_transaction_number(table_id, account_id)
     # Assign new transaction numbers sequentially
     edited_df["transaction_number"] = range(start_num + 1, start_num + 1 + len(edited_df))
 

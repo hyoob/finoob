@@ -1,9 +1,6 @@
 import pandas as pd
 from datetime import datetime
 
-from backend.infrastructure import local_storage
-import config
-
 def create_account_map(raw_data):
     """
     Creates a mapping of {Account_ID: Account_Name} for the UI to use.
@@ -26,11 +23,11 @@ def transform_to_dataframe(raw_data, show_archived):
     rows = []
     for acc_id, details in raw_data.items():
         row = details.copy()
-        row['id'] = acc_id  # Keep ID for reference
+        row['account_id'] = acc_id  # Keep ID for reference
         rows.append(row)
     
     if not rows:
-        return pd.DataFrame(columns=["account_name", "bank", "balance", "last_updated", "id"])
+        return pd.DataFrame(columns=["account_name", "bank", "balance", "last_updated", "account_id"])
         
     df = pd.DataFrame(rows)
 
@@ -61,12 +58,12 @@ def calculate_total_balance(df):
         return 0.0
     return df['balance'].sum()
 
-def get_bank_from_account(account_data, account):
+def get_bank_from_account(account_data, account_id):
     """Retrieves the bank name for a given account."""
-    bank = account_data.get(account, {}).get("bank", None)
+    bank = account_data.get(account_id, {}).get("bank", None)
     return bank
 
-def get_account_name(account_data, account):
+def get_account_name(account_data, account_id):
     """Retrieves the account name for a given account."""
-    name = account_data.get(account, {}).get("account_name", None)
+    name = account_data.get(account_id, {}).get("account_name", None)
     return name

@@ -2,12 +2,12 @@ from backend.domain import transaction_logic
 from backend.infrastructure import db_client, queries
 import pandas as pd
 
-def fetch_uncategorized_transactions(table_id, account):
+def fetch_uncategorized_transactions(table_id, account_id):
     """
     Fetches uncategorized transactions and returns a DataFrame.
     """
     # 1. Get Query (Hidden from UI)
-    query = queries.get_uncategorized_transactions_query(table_id, account)
+    query = queries.get_uncategorized_transactions_query(table_id, account_id)
     
     # 2. Fetch Data (Model)
     data = db_client.run_query(query)

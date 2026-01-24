@@ -16,7 +16,7 @@ ui.display_status_message()
 st.write("Fetch a batch of uncategorized transactions from BigQuery to edit.")
 
 # Ask the user which account to fetch uncategorized transactions for
-account = ui.pick_account(
+account_id = ui.pick_account(
     account_map,
     "Select the account to fetch uncategorized transactions from:",
     key="categorize_account_picker",
@@ -27,7 +27,7 @@ account = ui.pick_account(
 if 'uncategorized_df' not in st.session_state:
     if st.button("Fetch Uncategorized Transactions"):
         # Fetch transactions that are uncategorized
-        df = categorization_service.fetch_uncategorized_transactions(table_id, account)
+        df = categorization_service.fetch_uncategorized_transactions(table_id, account_id)
         if df is not None:
             # Store fetched data in session state
             st.session_state.uncategorized_df = df

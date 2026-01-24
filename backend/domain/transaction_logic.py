@@ -2,7 +2,7 @@ import pandas as pd
 from backend.infrastructure import parsers
 
 
-def get_new_transactions(account_map, account, latest_bq_tx, df):
+def get_new_transactions(latest_bq_tx, df):
     """
     Return new transactions from uploaded df that are after the latest_bq_tx.
     """

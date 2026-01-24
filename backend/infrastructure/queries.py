@@ -11,23 +11,23 @@ def get_merge_update_query(table_id, temp_table_id):
             T.last_updated = CURRENT_TIMESTAMP()
     """
 
-def get_latest_transaction_query(table_id, account):
+def get_latest_transaction_query(table_id, account_id):
     return f"""
         SELECT *
         FROM `{table_id}`
-        WHERE account_id = '{account}'
+        WHERE account_id = '{account_id}'
         ORDER BY transaction_number DESC, date DESC
         LIMIT 1
     """
 
-def get_max_transaction_id_query(table_id, account):
+def get_max_transaction_id_query(table_id, account_id):
     return f"""
         SELECT MAX(transaction_number) as max_num
         FROM `{table_id}`
-        WHERE account_id = '{account}'
+        WHERE account_id = '{account_id}'
     """
 
-def get_uncategorized_transactions_query(table_id, account):
+def get_uncategorized_transactions_query(table_id, account_id):
     return f"""
         SELECT 
             transaction_number, 
@@ -40,11 +40,11 @@ def get_uncategorized_transactions_query(table_id, account):
             account
         FROM `{table_id}`
         WHERE (category IS NULL OR category = '' OR category = 'TBD')
-            AND account = '{account}'
+            AND account_id = '{account_id}'
         ORDER BY date DESC, transaction_number DESC
     """
 
-def get_reimbursement_transactions_query(table_id, account):
+def get_reimbursement_transactions_query(table_id, account_id):
     """
     Fetches unprocessed reimbursement (credit) transactions.
     """
@@ -57,22 +57,22 @@ def get_reimbursement_transactions_query(table_id, account):
             credit, 
             category, 
             label, 
-            account,
+            account_id,
             reimbursement.to_transaction_id as to_transaction_id 
         FROM `{table_id}`
         WHERE 
-            account = '{account}'
+            account_id = '{account_id}'
             AND  category = 'Reimbursement'
             AND reimbursement.is_reimbursement IS NULL
             AND date > '2025-09-12' -- Last transaction date before Finoob launch
         ORDER BY date DESC
     """
 
-def get_all_expenses_query(table_id, account_all):
+def get_all_expenses_query(table_id, account_id_all):
     return f"""
         SELECT * FROM `{table_id}` 
         WHERE 
-            account = '{account_all}'
+            account_id = '{account_id_all}'
             AND debit > 0 
         ORDER BY date DESC, transaction_number DESC 
         LIMIT 1000
@@ -94,7 +94,7 @@ def link_reimbursement_struct_array(table_id, e_composite_id, r_id, r_acc, r_amt
             ),
             last_updated = CURRENT_TIMESTAMP()
         WHERE 
-            transaction_number = {r_id} AND account = '{r_acc}';
+            transaction_number = {r_id} AND account_id = '{r_acc}';
 
         -- B. Update the Debit Row (The Expense)
         UPDATE `{table_id}`
@@ -120,7 +120,7 @@ def link_reimbursement_struct_array(table_id, e_composite_id, r_id, r_acc, r_amt
             ),
             last_updated = CURRENT_TIMESTAMP()
         WHERE 
-            transaction_number = {e_id} AND account = '{e_acc}';
+            transaction_number = {e_id} AND account_id = '{e_acc}';
 
         COMMIT TRANSACTION;
     """

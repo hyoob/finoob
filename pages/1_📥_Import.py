@@ -12,7 +12,7 @@ categories, category_options, account_map, table_id = app_service.load_global_co
 st.header("📥 Import New Transactions")
 
 # Ask the user which account the uploaded file is for
-account = ui.pick_account(
+account_id = ui.pick_account(
     account_map,
     "Select the account for the file you want to upload:",
     key="import_account_picker",
@@ -27,7 +27,7 @@ if uploaded_file is not None:
         # === FACADE 1: READ & PROCESS NEW TRANSACTIONS===
         try:
             new_transactions, warning, latest_bq_date = ingestion_service.process_transaction_upload(
-                account_map, account, table_id, uploaded_file, categories
+                account_map, account_id, table_id, uploaded_file, categories
             )
         except Exception:
             print(traceback.format_exc()) 
@@ -60,7 +60,7 @@ if uploaded_file is not None:
                     with st.spinner("Saving transactions to BigQuery..."):
                         # save to BigQuery and update net worth table
                         count, update_success, error_msg = ingestion_service.save_transactions_workflow(
-                            table_id, account, edited_df
+                            table_id, account_id, edited_df
                         )
                     if update_success:
                         st.success(f"🎉 Successfully inserted {count} rows into BigQuery") 

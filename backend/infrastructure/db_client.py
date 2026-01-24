@@ -96,12 +96,11 @@ def link_reimbursement_struct_array(table_id, reimb_row, expense_row):
 
     try:
         r_id = reimb_row['transaction_number'] 
-        r_acc = reimb_row['account']            
+        r_acc = reimb_row['account_id']            
         r_amt = float(reimb_row['credit'])      
 
         e_id = expense_row['transaction_number']
-        e_acc = expense_row['account']
-        
+        e_acc = expense_row['account_id']
         r_composite_id = f"{r_acc}:{r_id}"
         e_composite_id = f"{e_acc}:{e_id}"
 
@@ -125,10 +124,10 @@ def insert_transactions(table_id, df):
     job = client.load_table_from_dataframe(df, table_id, job_config=job_config)
     job.result()
 
-def get_max_transaction_number(table_id, account):
+def get_max_transaction_number(table_id, account_id):
     """Fetches the max transaction number for an account."""
     client = get_client()
-    query = queries.get_max_transaction_id_query(table_id, account)
+    query = queries.get_max_transaction_id_query(table_id, account_id)
     result = client.query(query).result()
     row = list(result)[0]
     current_max = row["max_num"] if row["max_num"] is not None else 0

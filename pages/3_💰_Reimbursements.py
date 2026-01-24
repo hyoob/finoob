@@ -21,7 +21,7 @@ col1, col2 = st.columns(2)
 with col1:
     st.subheader("1. Select Reimbursement")
     # Account Picker
-    account_reimb = ui.pick_account(
+    account_id_reimb = ui.pick_account(
         account_map,
         "Account (Incoming):",
         key="reimb_account_picker",
@@ -30,7 +30,7 @@ with col1:
 
     # Fetch Logic
     if st.button("Fetch Reimbursements", key="fetch_reimb"):
-        df = reimbursement_service.fetch_reimbursement_candidates(table_id, account_reimb)
+        df = reimbursement_service.fetch_reimbursement_candidates(table_id, account_id_reimb)
         if df is not None:
             st.session_state.reimbursements_df = df
         else:
@@ -55,14 +55,14 @@ with col1:
 with col2:
     st.subheader("2. Find Original Expense")
     # Account Picker (Can be different from left side)
-    account_all = ui.pick_account(
+    account_id_all = ui.pick_account(
         # Note: No on_change here, so it doesn't clear the left side
         account_map, "Account (Expense):", key="all_tx_picker"
     )
 
     # Fetch Logic
     if st.button("Fetch last 1000 expenses", key="fetch_all"):
-        df = reimbursement_service.fetch_expense_candidates(table_id, account_all)
+        df = reimbursement_service.fetch_expense_candidates(table_id, account_id_all)
         if df is not None:
             st.session_state.all_tx_df = df
 
