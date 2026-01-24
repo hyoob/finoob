@@ -65,7 +65,7 @@ def get_changed_rows(original_df, edited_df, data_cols):
     
     # 1. Define the columns we care about for the diff
     # The primary keys + the editable columns
-    id_cols = ['transaction_number', 'account']
+    id_cols = ['transaction_number', 'account_id']
     cols_to_check = id_cols + data_cols
 
     # 2. Create a clean "original" subset

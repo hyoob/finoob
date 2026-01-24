@@ -43,7 +43,7 @@ def run_update_logic(edited_df, table_id):
     st.info("Saving updates... please wait.")
     
     # We only need the primary keys and the columns to be updated
-    df_to_merge = edited_df[['transaction_number', 'account', 'category', 'label']].copy()
+    df_to_merge = edited_df[['transaction_number', 'account_id', 'category', 'label']].copy()
     
     # Handle potential None values
     df_to_merge['category'] = df_to_merge['category'].fillna('')

@@ -3,7 +3,7 @@ def get_merge_update_query(table_id, temp_table_id):
     return f"""
         MERGE `{table_id}` T
         USING `{temp_table_id}` S
-        ON T.transaction_number = S.transaction_number AND T.account = S.account
+        ON T.transaction_number = S.transaction_number AND T.account_id = S.account_id
         WHEN MATCHED THEN
           UPDATE SET
             T.category = S.category,
@@ -37,6 +37,7 @@ def get_uncategorized_transactions_query(table_id, account_id):
             credit, 
             category, 
             label, 
+            account_id,
             account
         FROM `{table_id}`
         WHERE (category IS NULL OR category = '' OR category = 'TBD')
