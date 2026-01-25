@@ -72,8 +72,14 @@ def save_transactions_workflow(table_id, account_id, edited_df):
 
     # Get current max transaction_number for the account
     start_num = db_client.get_max_transaction_number(table_id, account_id)
+    
     # Assign new transaction numbers sequentially
     edited_df["transaction_number"] = range(start_num + 1, start_num + 1 + len(edited_df))
+
+    # Create a unique transaction_id for each transaction
+    edited_df["transaction_id"] = (
+        edited_df["account_id"] + ":" + edited_df["transaction_number"].astype(str)
+    )
 
     # Load into BigQuery
     db_client.insert_transactions(table_id, edited_df)   
