@@ -1,9 +1,10 @@
 from backend.infrastructure import local_storage, parsers, db_client, queries
 from backend.domain import account_logic, categorization_logic, transaction_logic
+from backend.services import accounts_service
 import pandas as pd
 import config
 
-def process_transaction_upload(account_map, account_id, table_id, uploaded_file, category_data):
+def process_transaction_upload(account_id, table_id, uploaded_file, category_data):
     """Facade 1: Handles the READ workflow (File -> DB Check -> New Data)."""
 
     account_data = local_storage.load_json_data(config.ACCOUNTS_PATH)
@@ -50,7 +51,8 @@ def process_transaction_upload(account_map, account_id, table_id, uploaded_file,
 def save_transactions_workflow(table_id, account_id, edited_df):
     """
     Facade 2: Handles the WRITE workflow.
-    Takes the dataframe from the UI, enriches it, and saves to BQ.
+    Takes the dataframe from the UI, enriches it, saves to BQ, updates net worth and
+    updates the account's closing balance.
     """
     # TODO: Move logic to domain layer
     # TODO: Consider using repository pattern for DB interactions
@@ -81,10 +83,24 @@ def save_transactions_workflow(table_id, account_id, edited_df):
         edited_df["account_id"] + ":" + edited_df["transaction_number"].astype(str)
     )
 
+    # Determine closing balance from the last row
+    if not edited_df.empty:
+        closing_balance = float(edited_df.iloc[-1]["balance"])
+    else:
+        closing_balance = None
+
     # Load into BigQuery
+    # TODO: Handle potential errors here
     db_client.insert_transactions(table_id, edited_df)   
 
     # Update the net worth table
     update_success, error_msg = db_client.update_net_worth_table() 
+
+    balance_update_success = False
+    if closing_balance is not None:
+        balance_update_success = accounts_service.update_account_balance(account_id, closing_balance)
+        print(f"Set balance to {closing_balance} for {account_id}")
+        if not balance_update_success:
+            print(f"Warning: Transactions saved, but account balance update failed for {account_id}")
 
     return len(edited_df), update_success, error_msg

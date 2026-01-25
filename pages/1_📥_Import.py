@@ -27,7 +27,7 @@ if uploaded_file is not None:
         # === FACADE 1: READ & PROCESS NEW TRANSACTIONS===
         try:
             new_transactions, warning, latest_bq_date = ingestion_service.process_transaction_upload(
-                account_map, account_id, table_id, uploaded_file, categories
+                account_id, table_id, uploaded_file, categories
             )
         except Exception:
             print(traceback.format_exc()) 
