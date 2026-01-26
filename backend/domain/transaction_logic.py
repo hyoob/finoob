@@ -1,6 +1,4 @@
 import pandas as pd
-from backend.infrastructure import parsers
-
 
 def get_new_transactions(latest_bq_tx, df):
     """
@@ -12,9 +10,9 @@ def get_new_transactions(latest_bq_tx, df):
     bq_credit = float(latest_bq_tx.get("credit", 0))
     bq_balance = float(latest_bq_tx.get("balance") or 0.0) # default to 0.0 if None
     latest_bq_date = pd.to_datetime(latest_bq_tx["date"])
-    
-    # Sort df from oldest → newest by date 
-    df = df.sort_values(by="date", ascending=True).reset_index(drop=True)
+
+    # df should already be sorted chronologically (Oldest -> Newest) at this point.    
+    # Sorting depends on bank-specific transaction export order, so it's handled in the parser.
 
     # Find the marker row in uploaded CSV
     mask = (
@@ -136,8 +134,35 @@ def classify_transaction(row):
     if row["debit"] != 0 and row["credit"] == 0:
         return "Debit"
     elif row["credit"] != 0 and row["debit"] == 0:
-        return "Credit"
+        return "Credit" 
+    elif row["debit"] == 0 and row["credit"] == 0:
+        return "Info"
     elif row["debit"] != 0 and row["credit"] != 0:
-        return "Error"  # or "Mixed", depending on how you want to flag this
+        return "Error"
     else:
         return "Unknown"
+
+def sort_transactions_chronologically(df, source_is_reverse_chronological):
+    """
+    Sorts a dataframe chronologically (Oldest -> Newest), handling same-day 
+    order correctly using the original index as a tie-breaker.
+    """
+    # 1. Capture the original order to use as a stable tie-breaker
+    df = df.copy() # Good practice to avoid SettingWithCopy warnings on slices
+    df['original_index'] = df.index
+
+    # 2. Determine tie-breaker direction
+    # If source is Reverse Chronological (Newest @ Top), deeper rows (Higher Index) are older.
+    # So we want Higher Index first -> Ascending=False
+    if source_is_reverse_chronological:
+        tiebreaker_ascending = False
+    else:
+        tiebreaker_ascending = True
+
+    # 3. Sort by Date (Always ASC), then Original Index (Variable)
+    df = df.sort_values(
+        by=["date", "original_index"], 
+        ascending=[True, tiebreaker_ascending]
+    ).drop(columns=['original_index']).reset_index(drop=True)
+
+    return df

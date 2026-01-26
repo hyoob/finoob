@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np  
+from backend.domain import transaction_logic
 
 # 1. The Contract (Abstract Base Class)
 class BankStrategy:
@@ -32,6 +33,9 @@ class PTSBStrategy(BankStrategy):
         # Drop unnecessary columns (some give pyarrow errors due to mixed types)
         df = df.drop(columns=["Money Out (€)", "Money In (€)", "Date", "Description"])
 
+        # Sort chronologically (Oldest -> Newest), with index tie-breaker
+        df = transaction_logic.sort_transactions_chronologically(df, source_is_reverse_chronological=True)
+
         return df[["date", "debit", "credit", "description", "balance"]]
 
 
@@ -61,6 +65,9 @@ class RevolutStrategy(BankStrategy):
             columns=["Started Date", "Amount", "Description", "Balance", "Amount_Numeric", "State"]
         )
 
+        # Sort chronologically (Oldest -> Newest), with index tie-breaker
+        df = transaction_logic.sort_transactions_chronologically(df, source_is_reverse_chronological=False)
+
         return df[["date", "debit", "credit", "description", "balance"]]
     
 class CMBStrategy(BankStrategy):
@@ -73,6 +80,9 @@ class CMBStrategy(BankStrategy):
         df["credit"] = pd.to_numeric(df["Credit"], errors="coerce").fillna(0)
         df["description"] = pd.Series(df["Libelle"], dtype="string").str.strip()
 
+        # Sort chronologically (Oldest -> Newest), with index tie-breaker
+        df = transaction_logic.sort_transactions_chronologically(df, source_is_reverse_chronological=True)
+
         return df[["date", "debit", "credit", "description"]]
 
 class USbankStrategy(BankStrategy):
@@ -84,6 +94,9 @@ class USbankStrategy(BankStrategy):
         df["debit"] = pd.to_numeric(df["Money Out (€)"], errors="coerce").fillna(0).abs()
         df["credit"] = pd.to_numeric(df["Money In (€)"], errors="coerce").fillna(0)
         df["description"] = pd.Series(df["Description"], dtype="string").str.strip()
+
+        # Sort chronologically (Oldest -> Newest), with index tie-breaker
+        df = transaction_logic.sort_transactions_chronologically(df, source_is_reverse_chronological=True)
 
         return df[["date", "debit", "credit", "description"]]
 
