@@ -75,6 +75,7 @@ def get_categorization_editor_config(category_options):
         "debit": st.column_config.NumberColumn("Debit", format="€%.2f", disabled=True),
         "credit": st.column_config.NumberColumn("Credit", format="€%.2f", disabled=True),
         "account": st.column_config.TextColumn("Account", disabled=True),
+        "account_id": None,  # Hide account_id column
         
         # Enable editing for category and label
         "category": st.column_config.SelectboxColumn(
