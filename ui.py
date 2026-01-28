@@ -1,5 +1,7 @@
 import streamlit as st
 import config
+from datetime import datetime
+import pandas as pd
 
 def clear_session_state_data():
     """Clears transactions from session state."""
@@ -157,11 +159,6 @@ def get_accounts_table_config():
             "Balance",
             width="small"
         ),
-        "last_updated": st.column_config.DatetimeColumn(
-            "Last Updated",
-            format="YYYY-MM-DD, HH:mm:ss",
-            width="medium"
-        ),
         "account_id": None  # Hide ID
     }
 
@@ -200,6 +197,33 @@ def render_update_balance_form(accounts_df):
             
     return False, None, None
 
+def format_date_with_days_ago(val):
+    """
+    Converts a timestamp to 'YYYY-MM-DD (X days ago)'.
+    """
+    if pd.isna(val) or val == "":
+        return ""
+    
+    # Ensure it's a datetime object (in case it's a string)
+    if isinstance(val, str):
+        try:
+            val = pd.to_datetime(val)
+        except:
+            return val
+
+    # Calculate days ago
+    days_ago = (datetime.now().date() - val.date()).days
+    
+    # Handle singular/plural and "today"
+    if days_ago == 0:
+        day_str = "today"
+    elif days_ago == 1:
+        day_str = "1 day ago"
+    else:
+        day_str = f"{days_ago} days ago"
+
+    return f"{val.strftime('%Y-%m-%d')} ({day_str})"
+
 def format_accounts_table(df):
     """
     Applies Pandas Styler formatting (e.g., commas for thousands).
@@ -209,6 +233,11 @@ def format_accounts_table(df):
     if df.empty:
         return df
         
+    df = df.copy()
+
+    df["last_updated"] = df["last_updated"].apply(format_date_with_days_ago)
+
+    # Apply the numeric formatting to the balance column
     return df.style.format({
-        "balance": "€{:,.2f}"  # Adds commas: 1,234.56
+        "balance": "€{:,.2f}"
     })

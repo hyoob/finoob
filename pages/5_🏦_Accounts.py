@@ -27,7 +27,7 @@ st.dataframe(
     column_config=ui.get_accounts_table_config(),
     use_container_width=True,
     hide_index=True,
-    column_order=["account_name", "bank", "balance", "last_updated"]
+    column_order=["account_name", "balance", "last_updated"]
 )
 
 # --- SECTION 3: UPDATE ACTION ---
