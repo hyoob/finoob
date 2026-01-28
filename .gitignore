@@ -16,3 +16,4 @@ config_data/categories.json
 
 # Ignore sensitive financial data
 config_data/accounts.json
+config_data/accounts_dev.json
