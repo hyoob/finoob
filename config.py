@@ -13,13 +13,22 @@ if ENV not in ["dev", "prod"]:
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CATEGORIES_PATH = os.path.join(BASE_DIR, "config_data", "categories.json")
 CATEGORIES_TEMPLATE_PATH = os.path.join(BASE_DIR, "config_data", "categories_example.json")
-ACCOUNTS_PATH = os.path.join(BASE_DIR, "config_data", "accounts.json")
+ACCOUNTS_PROD_PATH = os.path.join(BASE_DIR, "config_data", "accounts.json")
+ACCOUNTS_DEV_PATH = os.path.join(BASE_DIR, "config_data", "accounts_dev.json")
 ACCOUNTS_TEMPLATE_PATH = os.path.join(BASE_DIR, "config_data", "accounts_example.json")
 
 # --- BigQuery Configuration ---
 BQ_PROJECT_ID = st.secrets["gcp_service_account"]["project_id"]
 NET_WORTH_DATASET_ID = "assets"
 NET_WORTH_PROCEDURE = f"{BQ_PROJECT_ID}.{NET_WORTH_DATASET_ID}.create_networth_table"
+
+# Select accounts path based on environment
+if ENV == "dev":
+    ACCOUNTS_PATH = ACCOUNTS_DEV_PATH
+    # Optional: Print a warning so you know you are in dev mode
+    print("⚠️  [CONFIG] Running in DEV mode")
+else:
+    ACCOUNTS_PATH = ACCOUNTS_PROD_PATH
 
 def get_categories_path():
     if os.path.exists(CATEGORIES_PATH):
