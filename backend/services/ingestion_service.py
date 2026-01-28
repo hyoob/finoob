@@ -84,8 +84,11 @@ def save_transactions_workflow(table_id, account_id, edited_df):
     )
 
     # Determine closing balance from the last row
-    if not edited_df.empty:
-        closing_balance = float(edited_df.iloc[-1]["balance"])
+    # Filter out 'Info' rows to find valid financial transactions
+    valid_rows = edited_df[edited_df["transaction_type"] != "Info"]
+    
+    if not valid_rows.empty:
+        closing_balance = float(valid_rows.iloc[-1]["balance"])
     else:
         closing_balance = None
 
