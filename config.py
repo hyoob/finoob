@@ -19,8 +19,8 @@ ACCOUNTS_TEMPLATE_PATH = os.path.join(BASE_DIR, "config_data", "accounts_example
 
 # --- BigQuery Configuration ---
 BQ_PROJECT_ID = st.secrets["gcp_service_account"]["project_id"]
-NET_WORTH_DATASET_ID = "assets"
-NET_WORTH_PROCEDURE = f"{BQ_PROJECT_ID}.{NET_WORTH_DATASET_ID}.create_networth_table"
+NET_WORTH_DATASET_ID = "reporting"
+NET_WORTH_PROCEDURE = f"{BQ_PROJECT_ID}.{NET_WORTH_DATASET_ID}.sp_refresh_net_worth"
 
 # Select accounts path based on environment
 if ENV == "dev":
