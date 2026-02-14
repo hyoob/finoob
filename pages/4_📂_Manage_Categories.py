@@ -69,62 +69,116 @@ with st.expander("🗑️ Remove Category"):
 st.header("📂 Manage Keywords")
 
 all_categories = list(st.session_state.manage_cats.keys())
-selected_cat = st.selectbox("Select a Category to edit:", all_categories, index=None)
 
-if selected_cat:
-    st.subheader(f"Editing: {selected_cat}")
+# ### NEW: Add "Show All" to the dropdown options
+view_options = ["Show All"] + all_categories
+selected_view = st.selectbox("Select a Category to edit:", view_options, index=0)
 
-    # A. INITIALIZATION (Run only when category changes)
-    # We use 'editor_key' to force the editor to reset only when we switch categories
-    if "current_cat_name" not in st.session_state or st.session_state.current_cat_name != selected_cat:
-        st.session_state.current_cat_name = selected_cat
+if selected_view:
+    st.subheader(f"Editing: {selected_view}")
+
+    # ### NEW: Smart State Reset
+    # If the user switches from "Netflix" to "Show All", we must clear the old editor state
+    # to prevent data conflicts or "stale" rows appearing.
+    if "current_view_name" not in st.session_state or st.session_state.current_view_name != selected_view:
+        st.session_state.current_view_name = selected_view
+        # Clear specific buffers if they exist
+        if "editor_df" in st.session_state: del st.session_state.editor_df
+        if "editor_all_df" in st.session_state: del st.session_state.editor_all_df
+
+    # =========================================================
+    # ### NEW: OPTION A - SHOW ALL CATEGORIES
+    # =========================================================
+    if selected_view == "Show All":
         
-        # Load raw data
-        raw_data = st.session_state.manage_cats[selected_cat]
+        # 1. INITIALIZATION: Flatten all categories into one big DataFrame
+        if "editor_all_df" not in st.session_state:
+            # Calls the new helper function we wrote
+            st.session_state.editor_all_df = categorization_logic.flatten_categories_to_df(st.session_state.manage_cats)
 
-        st.session_state.editor_df = categorization_logic.prepare_keywords_dataframe(raw_data)
+        # 2. CONFIGURATION: Add the 'Category' column so you can move keywords around
+        column_cfg = ui.get_keywords_editor_config() # Get base config from UI
+        
+        # ### NEW: Override to add a Category Dropdown inside the table
+        column_cfg["category"] = st.column_config.SelectboxColumn(
+            "Category",
+            help="Move this keyword to a different category",
+            options=all_categories,
+            width="medium",
+            required=True
+        )
 
-    # B. THE EDITOR
-    # We bind the editor to 'editor_df'. Changes here update that variable automatically.
-    edited_df = st.data_editor(
-        st.session_state.editor_df,
-        column_config=ui.get_keywords_editor_config(),
-        num_rows="dynamic",
-        use_container_width=True,
-        key="editor_v2",
-        hide_index=True
-    )
+        # 3. THE EDITOR
+        edited_df = st.data_editor(
+            st.session_state.editor_all_df,
+            column_config=column_cfg,
+            num_rows="dynamic",
+            use_container_width=True,
+            key="editor_all_v1",
+            hide_index=True
+        )
 
-    # C. SYNC BACK (Update the 'Dirty' State)
-    # Convert DF back to list and store in main session state
-    # This ensures if we switch categories, your edits are remembered in memory
-    updated_list = categorization_logic.convert_df_to_keywords_list(edited_df)
-    st.session_state.manage_cats[selected_cat] = updated_list
+        # 4. SYNC BACK: Reconstruct the dictionary from the flat table
+        # We pass 'all_categories' to ensure we don't accidentally delete categories that have 0 keywords
+        updated_dict = categorization_logic.reconstruct_dict_from_flat_df(edited_df, all_categories)
+        
+        # Update the Master State (The Dictionary)
+        st.session_state.manage_cats = updated_dict
+        
+        # Update the local buffer so the editor doesn't reset while typing
+        st.session_state.editor_all_df = edited_df
+
+    # =========================================================
+    # ### EXISTING: OPTION B - SINGLE CATEGORY
+    # =========================================================
+    else:
+        # 1. INITIALIZATION: Load data for just this category
+        if "editor_df" not in st.session_state:
+            raw_data = st.session_state.manage_cats[selected_view]
+            st.session_state.editor_df = categorization_logic.prepare_keywords_dataframe(raw_data)
+
+        # 2. THE EDITOR (Standard Config)
+        edited_df = st.data_editor(
+            st.session_state.editor_df,
+            column_config=ui.get_keywords_editor_config(),
+            num_rows="dynamic",
+            use_container_width=True,
+            key="editor_single_v2",
+            hide_index=True
+        )
+
+        # 3. SYNC BACK
+        updated_list = categorization_logic.convert_df_to_keywords_list(edited_df)
+        st.session_state.manage_cats[selected_view] = updated_list
+
 
 # --- SECTION 4: SAVE TO DISK ---
 st.divider()
 col1, col2 = st.columns([1, 4])
 
 if col1.button("💾 Save Changes", type="primary"):
-    # 1. Get the "Original" vs "Current" for the selected category
-    # (We only validate changes for the active category to avoid confusion)
-    if selected_cat:
-        original = st.session_state.manage_cats_snapshot.get(selected_cat, [])
-        current = st.session_state.manage_cats.get(selected_cat, [])
-        
-        msg = categorization_logic.get_keyword_changes_summary(original, current)
+    
+    # 1. Generate a Summary Message (Logic adapted for "Show All")
+    msg = ""
+    if selected_view and selected_view != "Show All":
+        # If editing a single category, we can show specific diffs easily
+        original = st.session_state.manage_cats_snapshot.get(selected_view, [])
+        current = st.session_state.manage_cats.get(selected_view, [])
+        msg_details = categorization_logic.get_keyword_changes_summary(original, current)
+        msg = f"Saved {selected_view}: {msg_details}" if msg_details else f"Saved {selected_view}."
     else:
-        msg = "Global Save" # Fallback if no category selected
+        # ### CHANGED: Generic message for Global Save
+        msg = "Global changes saved successfully."
 
     # 2. Save EVERYTHING to disk
-    success = rules_service.update_rules(st.session_state.manage_cats)
+    success, error_text = rules_service.update_rules(st.session_state.manage_cats)
 
     if success:
         # 3. Update Snapshot (Make the new state the clean state)
         st.session_state.manage_cats_snapshot = copy.deepcopy(st.session_state.manage_cats)
         
         # 4. Notify & Rerun
-        st.session_state.pending_success = f"Saved! {msg if msg else ''}"
+        st.session_state.pending_success = f"✅ {msg}"
         st.rerun()
     else:
-        st.error("❌ Failed to save.")
+        st.error(f"❌ Failed to save: {error_text}")

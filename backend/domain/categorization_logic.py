@@ -96,3 +96,43 @@ def convert_df_to_keywords_list(df):
         return []
     
     return df.to_dict("records")
+
+# Change the name from 'flatten_all_categories' to 'flatten_categories_to_df'
+def flatten_categories_to_df(categories_dict):
+    """
+    Leverages existing logic to flatten the entire dictionary into one DataFrame.
+    """
+    dfs = []
+    for cat, data_list in categories_dict.items():
+        # REUSE: Use your existing function to clean/sort the list
+        df = prepare_keywords_dataframe(data_list)
+        
+        # ADD CONTEXT: Tag these rows with their category
+        df['category'] = cat
+        dfs.append(df)
+    
+    # Combine all small DFs into one big one
+    if not dfs:
+        return pd.DataFrame(columns=["category", "keyword", "label"])
+    
+    return pd.concat(dfs, ignore_index=True)
+
+# Change the name from 'reconstruct_categories_dict' to 'reconstruct_dict_from_flat_df'
+def reconstruct_dict_from_flat_df(flat_df, original_keys):
+    """
+    Rebuilds the dictionary. This logic is unique and cannot borrow from existing functions.
+    """
+    new_dict = {k: [] for k in original_keys}
+    
+    if flat_df.empty:
+        return new_dict
+
+    # Grouping is the fastest way to rebuild the lists
+    if "category" in flat_df.columns:
+        for cat, group in flat_df.groupby("category"):
+            if cat in new_dict:
+                # Remove the 'category' column before saving to list
+                records = group.drop(columns=["category"]).to_dict("records")
+                new_dict[cat] = records
+                
+    return new_dict
