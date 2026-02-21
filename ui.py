@@ -249,10 +249,11 @@ def get_mortgage_editor_config():
         "mortgage_name": st.column_config.TextColumn("Mortgage Name", required=True),
         "start_date": st.column_config.DateColumn("Start Date", required=True),
         "end_date": st.column_config.DateColumn("End Date"),
-        "start_balance": st.column_config.NumberColumn("Start Balance", format="€%.2f", required=True),
-        "interest_rate_pct": st.column_config.NumberColumn("Interest Rate %", format="%.2f", required=True),
-        "monthly_payment": st.column_config.NumberColumn("Monthly Payment", format="€%.2f", required=True),
+        "start_balance": st.column_config.NumberColumn("Initial Start Balance", format="€%.2f", required=True),
+        "interest_rate_pct": st.column_config.NumberColumn("Initial Interest Rate %", format="%.2f", required=True),
+        "monthly_payment": st.column_config.NumberColumn("Initial Monthly Payment", format="€%.2f", required=True),
         "drawdown_date": st.column_config.DateColumn("Drawdown Date", required=True),
+        "events": None,
     }
 
 def render_mortgage_schedule(schedule_df):

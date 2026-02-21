@@ -145,10 +145,11 @@ def get_mortgage_merge_query(target_table, source_table):
             start_balance = S.start_balance,
             interest_rate_pct = S.interest_rate_pct,
             monthly_payment = S.monthly_payment,
-            drawdown_date = S.drawdown_date
+            drawdown_date = S.drawdown_date,
+            events = S.events
         WHEN NOT MATCHED THEN
-          INSERT (mortgage_name, start_date, end_date, start_balance, interest_rate_pct, monthly_payment, drawdown_date)
-          VALUES (mortgage_name, start_date, end_date, start_balance, interest_rate_pct, monthly_payment, drawdown_date)
+          INSERT (mortgage_name, start_date, end_date, start_balance, interest_rate_pct, monthly_payment, drawdown_date, events)
+          VALUES (mortgage_name, start_date, end_date, start_balance, interest_rate_pct, monthly_payment, drawdown_date, events)
     """
 
 def get_mortgage_schedule_query(table_id):

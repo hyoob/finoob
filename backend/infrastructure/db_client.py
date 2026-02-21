@@ -165,6 +165,14 @@ def save_mortgage_updates(table_id, edited_df):
     df_to_load = edited_df.copy()
     date_cols = ["start_date", "end_date", "drawdown_date"]
     schema = []
+
+    # Define schema for the nested events record
+    schema.append(bigquery.SchemaField("events", "RECORD", mode="REPEATED", fields=[
+        bigquery.SchemaField("date", "DATE"),
+        bigquery.SchemaField("event_type", "STRING"),
+        bigquery.SchemaField("value", "FLOAT"),
+    ]))
+
     for col in date_cols:
         if col in df_to_load.columns:
             df_to_load[col] = pd.to_datetime(df_to_load[col], errors='coerce').dt.date
