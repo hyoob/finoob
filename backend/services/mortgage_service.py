@@ -22,4 +22,27 @@ def get_mortgage_schedule(table_id):
     """Fetches the amortization schedule."""
     query = queries.get_mortgage_schedule_query(table_id)
     rows = db_client.run_query(query)
-    return pd.DataFrame(rows) if rows else pd.DataFrame()
+    df = pd.DataFrame(rows) if rows else pd.DataFrame()
+
+    if not df.empty and "balance" in df.columns:
+        df["balance"] = df["balance"].abs()
+
+    return df
+
+def get_simulation_defaults(df):
+    """Extracts default simulation values from the mortgage terms dataframe."""
+    defaults = {
+        "balance": 300000.0,
+        "rate": 4.0,
+        "payment": 1500.0,
+        "start_date": pd.to_datetime("today").date()
+    }
+    
+    if not df.empty:
+        row = df.iloc[0]
+        defaults["balance"] = float(row.get("start_balance", defaults["balance"]))
+        defaults["rate"] = float(row.get("interest_rate_pct", defaults["rate"]))
+        defaults["payment"] = float(row.get("monthly_payment", defaults["payment"]))
+        defaults["start_date"] = row.get("start_date", defaults["start_date"])
+        
+    return defaults
