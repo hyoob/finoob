@@ -1,5 +1,24 @@
 import pandas as pd
 
+def _prepare_event_list(events_df):
+    """Helper to clean and sort events for processing."""
+    if events_df is not None and not events_df.empty:
+        valid_events = events_df.dropna(subset=['date', 'event_type', 'value']).copy()
+        if not valid_events.empty:
+            valid_events['date'] = pd.to_datetime(valid_events['date'])
+            return valid_events.sort_values('date').to_dict('records')
+    return []
+
+def _get_snapshot_date(events_df):
+    """Determines the snapshot date: Max of (Today, Last Event Date)."""
+    snapshot_date = pd.to_datetime("today").normalize()
+    
+    if events_df is not None and not events_df.empty:
+        valid_dates = pd.to_datetime(events_df['date'], errors='coerce').dropna()
+        if not valid_dates.empty:
+            snapshot_date = max(snapshot_date, valid_dates.max())
+    return snapshot_date
+
 def calculate_amortization_schedule(principal, annual_rate_pct, monthly_payment, start_date, events=None, monthly_extra_payment=0):
     """
     Generates an amortization schedule based on simulation inputs.
@@ -32,14 +51,7 @@ def calculate_amortization_schedule(principal, annual_rate_pct, monthly_payment,
     max_months = 1200 
 
     # Prepare events queue
-    event_list = []
-    if events is not None and not events.empty:
-        # Filter valid rows and sort by date
-        valid_events = events.dropna(subset=['date', 'event_type', 'value']).copy()
-        if not valid_events.empty:
-            valid_events['date'] = pd.to_datetime(valid_events['date'])
-            valid_events = valid_events.sort_values('date')
-            event_list = valid_events.to_dict('records')
+    event_list = _prepare_event_list(events)
     
     for _ in range(max_months):
         # Process events that happen on or before this payment date
@@ -113,14 +125,7 @@ def calculate_snapshot_metrics(sim_df, events_df, default_payment):
     if sim_df.empty:
         return None
 
-    snapshot_date = pd.to_datetime("today").normalize()
-    
-    if events_df is not None:
-        valid_events = events_df.dropna(subset=['date'])
-        if not valid_events.empty:
-            last_event_date = pd.to_datetime(valid_events['date'].max())
-            if last_event_date > snapshot_date:
-                snapshot_date = last_event_date
+    snapshot_date = _get_snapshot_date(events_df)
 
     # Find the schedule row closest to (<=) the snapshot date
     past_rows = sim_df[pd.to_datetime(sim_df['month']) <= snapshot_date]
