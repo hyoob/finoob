@@ -125,3 +125,35 @@ def link_reimbursement_struct_array(table_id, e_composite_id, r_id, r_acc, r_amt
 
         COMMIT TRANSACTION;
     """
+
+def get_mortgage_terms_query(table_id):
+    return f"""
+        SELECT *
+        FROM `{table_id}`
+        ORDER BY start_date DESC
+    """
+
+def get_mortgage_merge_query(target_table, source_table):
+    return f"""
+        MERGE `{target_table}` T
+        USING `{source_table}` S
+        ON T.mortgage_name = S.mortgage_name
+        WHEN MATCHED THEN
+          UPDATE SET
+            start_date = S.start_date,
+            end_date = S.end_date,
+            start_balance = S.start_balance,
+            interest_rate_pct = S.interest_rate_pct,
+            monthly_payment = S.monthly_payment,
+            drawdown_date = S.drawdown_date
+        WHEN NOT MATCHED THEN
+          INSERT (mortgage_name, start_date, end_date, start_balance, interest_rate_pct, monthly_payment, drawdown_date)
+          VALUES (mortgage_name, start_date, end_date, start_balance, interest_rate_pct, monthly_payment, drawdown_date)
+    """
+
+def get_mortgage_schedule_query(table_id):
+    return f"""
+        SELECT *
+        FROM `{table_id}`
+        ORDER BY month ASC
+    """

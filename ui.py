@@ -242,3 +242,47 @@ def format_accounts_table(df):
     return df.style.format({
         "balance": "€{:,.2f}"
     })
+
+def get_mortgage_editor_config():
+    """Returns the column configuration for the mortgage editor."""
+    return {
+        "mortgage_name": st.column_config.TextColumn("Mortgage Name", required=True),
+        "start_date": st.column_config.DateColumn("Start Date", required=True),
+        "end_date": st.column_config.DateColumn("End Date"),
+        "start_balance": st.column_config.NumberColumn("Start Balance", format="€%.2f", required=True),
+        "interest_rate_pct": st.column_config.NumberColumn("Interest Rate %", format="%.2f", required=True),
+        "monthly_payment": st.column_config.NumberColumn("Monthly Payment", format="€%.2f", required=True),
+        "drawdown_date": st.column_config.DateColumn("Drawdown Date", required=True),
+    }
+
+def render_mortgage_schedule(schedule_df):
+    """Renders the mortgage amortization schedule chart and data."""
+    if schedule_df.empty:
+        st.info("No schedule data available. Please ensure mortgage terms are saved.")
+        return
+
+    # Ensure month is datetime for proper plotting
+    # We work on a copy to avoid mutating the original dataframe if it's used elsewhere
+    df = schedule_df.copy()
+    df["month"] = pd.to_datetime(df["month"])
+    
+    tab1, tab2 = st.tabs(["Chart", "Data"])
+    
+    with tab1:
+        st.line_chart(df, x="month", y="balance")
+        
+    with tab2:
+        # Format currency columns with commas and Euro sign
+        currency_cols = [
+            "balance", "monthly_total_paid", "monthly_principal", 
+            "monthly_interest", "cumulative_principal", "cumulative_interest"
+        ]
+        format_dict = {col: "€{:,.2f}" for col in currency_cols if col in df.columns}
+
+        st.dataframe(
+            df.style.format(format_dict),
+            hide_index=True,
+            column_config={
+                "month": st.column_config.DateColumn("Month", format="YYYY-MM")
+            }
+        )

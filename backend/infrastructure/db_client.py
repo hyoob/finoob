@@ -1,6 +1,7 @@
 import streamlit as st
 from google.oauth2 import service_account
 from google.cloud import bigquery
+import pandas as pd
 from datetime import datetime, timezone
 import backend.infrastructure.queries as queries
 import config
@@ -153,3 +154,49 @@ def update_net_worth_table():
     Facade for running the create_networth_table procedure in BigQuery.
     """
     return execute_procedure(config.NET_WORTH_PROCEDURE)
+
+def save_mortgage_updates(table_id, edited_df):
+    """
+    Updates Mortgage Terms table using a MERGE statement.
+    """
+    client = get_client()
+    
+    # Prepare data types for BigQuery
+    df_to_load = edited_df.copy()
+    date_cols = ["start_date", "end_date", "drawdown_date"]
+    schema = []
+    for col in date_cols:
+        if col in df_to_load.columns:
+            df_to_load[col] = pd.to_datetime(df_to_load[col], errors='coerce').dt.date
+            schema.append(bigquery.SchemaField(col, "DATE"))
+
+    try:
+        # Get table details to build temp table ID
+        table_ref = client.get_table(table_id)
+        project = table_ref.project
+        dataset = table_ref.dataset_id
+        temp_table_id = f"{project}.{dataset}.temp_mortgage_{int(datetime.now(timezone.utc).timestamp())}"
+
+        # 1. Load edited data to a temporary table
+        job_config = bigquery.LoadJobConfig(
+            schema=schema,
+            autodetect=True
+        )
+        job = client.load_table_from_dataframe(df_to_load, temp_table_id, job_config=job_config)
+        job.result()  # Wait for creation
+
+        # 2. Run MERGE
+        merge_query = queries.get_mortgage_merge_query(table_id, temp_table_id)
+        merge_job = client.query(merge_query)
+        merge_job.result()
+        
+        return True, f"Successfully updated {merge_job.num_dml_affected_rows} rows."
+
+    except Exception as e:
+        return False, str(e)
+    
+    finally:
+        try:
+            client.delete_table(temp_table_id)
+        except Exception:
+            pass

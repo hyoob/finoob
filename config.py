@@ -21,6 +21,8 @@ ACCOUNTS_TEMPLATE_PATH = os.path.join(BASE_DIR, "config_data", "accounts_example
 BQ_PROJECT_ID = st.secrets["gcp_service_account"]["project_id"]
 NET_WORTH_DATASET_ID = "reporting"
 NET_WORTH_PROCEDURE = f"{BQ_PROJECT_ID}.{NET_WORTH_DATASET_ID}.sp_refresh_net_worth"
+MORTGAGE_TABLE_ID = f"{BQ_PROJECT_ID}.liabilities.dim_mortgage_terms"
+MORTGAGE_SCHEDULE_VIEW_ID = f"{BQ_PROJECT_ID}.liabilities.view_mortgage_full_schedule"
 
 # Select accounts path based on environment
 if ENV == "dev":
