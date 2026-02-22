@@ -23,6 +23,8 @@ NET_WORTH_DATASET_ID = "reporting"
 NET_WORTH_PROCEDURE = f"{BQ_PROJECT_ID}.{NET_WORTH_DATASET_ID}.sp_refresh_net_worth"
 MORTGAGE_TABLE_ID = f"{BQ_PROJECT_ID}.liabilities.dim_mortgage_terms"
 MORTGAGE_SCHEDULE_VIEW_ID = f"{BQ_PROJECT_ID}.liabilities.view_mortgage_full_schedule"
+STOCKS_TABLE_ID = f"{BQ_PROJECT_ID}.assets.stocks"
+STOCK_TICKER = "GOOG"
 
 # Select accounts path based on environment
 if ENV == "dev":

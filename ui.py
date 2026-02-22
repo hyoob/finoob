@@ -328,3 +328,88 @@ def render_simulation_inputs(defaults):
     sim_start_date = c4.date_input("Start Date", value=defaults["start_date"])
     
     return sim_balance, sim_rate, sim_payment, sim_start_date
+
+def render_stock_metrics(metrics):
+    """Renders the summary metrics for the stocks page."""
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric(
+        "Net Vested Value", 
+        f"€{metrics.get('current_vested_val', 0):,.0f}"
+    )
+    m2.metric(
+        "Future Value (Unvested)", 
+        f"€{metrics.get('future_val', 0):,.0f}"
+    )
+    m3.metric(
+        "Total Projected Net", 
+        f"€{metrics.get('total_potential_val', 0):,.0f}"
+    )
+    m4.metric(
+        "Next Vesting Event", 
+        metrics.get('next_vest_msg', 'N/A'),
+        help=metrics.get('next_vest_help')
+    )
+
+def render_stock_price_card(stock_info):
+    """Renders a card with the current stock price information and a historical chart."""
+    price = stock_info.get('price', 0)
+    prev_close = stock_info.get('previous_close', 0)
+    currency_symbol = "$" if stock_info.get('currency') == "USD" else "€" # Simple currency handling
+    name = stock_info.get('name', '')
+    history_df = stock_info.get('history')
+    
+    delta_str = "N/A"
+    if price and prev_close and price > 0 and prev_close > 0:
+        delta = price - prev_close
+        delta_pct = (delta / prev_close) * 100
+        delta_str = f"{delta:+.2f} ({delta_pct:+.2f}%)"
+
+    st.subheader(f"Live Market Data for {name}")
+    
+    col1, col2 = st.columns([1, 2])
+
+    with col1:
+        st.metric("Current Price", f"{currency_symbol}{price:,.2f}", delta=delta_str)
+        day_low = stock_info.get('day_low')
+        day_high = stock_info.get('day_high')
+        if day_low and day_high:
+            st.caption(f"Day Low: {day_low:.2f} | Day High: {day_high:.2f}")
+
+    with col2:
+        if history_df is not None and not history_df.empty:
+            min_date = history_df.index.min().date()
+            max_date = history_df.index.max().date()
+            
+            # Default to 1 year ago
+            default_start = max(min_date, max_date - pd.Timedelta(days=365))
+
+            start_date, end_date = st.slider(
+                "Zoom History",
+                min_value=min_date,
+                max_value=max_date,
+                value=(default_start, max_date),
+                format="YYYY-MM-DD"
+            )
+            
+            filtered_df = history_df[(history_df.index.date >= start_date) & (history_df.index.date <= end_date)]
+            st.line_chart(filtered_df['Close'], use_container_width=True)
+        else:
+            st.caption("Historical chart data not available.")
+
+def render_stock_visualizations(df):
+    """Renders the charts and data table for the stocks page."""
+    tab1, tab2 = st.tabs(["📊 Charts", "📄 Data"])
+
+    with tab1:
+        st.subheader("Cumulative Net Value Over Time")
+        st.line_chart(df, x="Date", y="Total_Vested_after_tax")
+        
+        st.subheader("Vesting Schedule (GSUs per Date)")
+        st.bar_chart(df, x="Date", y="GSUs")
+
+    with tab2:
+        st.dataframe(
+            df.sort_values("Date", ascending=False),
+            use_container_width=True,
+            hide_index=True
+        )

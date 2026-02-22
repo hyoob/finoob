@@ -158,3 +158,10 @@ def get_mortgage_schedule_query(table_id):
         FROM `{table_id}`
         ORDER BY month ASC
     """
+
+def get_stocks_data_query(table_id):
+    return f"""
+        SELECT *
+        FROM `{table_id}`
+        ORDER BY Date ASC
+    """
