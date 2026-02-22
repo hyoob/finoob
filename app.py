@@ -12,4 +12,5 @@ Select a mode from the sidebar to get started:
 * **💰 Reimbursements**: Link credits to expenses.
 * **📂 Manage Categories**: Add, remove, and edit categories and keywords.
 * **🏠 Mortgage**: View and edit mortgage terms.
+* **📈 Stocks**: Track stock grants and vesting schedule.
 """)
