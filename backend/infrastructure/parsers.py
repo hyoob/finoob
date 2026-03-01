@@ -86,24 +86,35 @@ class RevolutStrategy(BankStrategy):
     def _normalize(self, df):
         # Filter for 'COMPLETED' transactions only, as others may be pending/reverted.
         df = df[df["State"] == "COMPLETED"].copy()
-        # Ensure 'Amount' is a numeric column for comparison
+        
+        # Ensure 'Amount' and 'Fee' are numeric, filling NaNs with 0
         df["Amount_Numeric"] = pd.to_numeric(df["Amount"], errors="coerce").fillna(0)
-        # CREDIT column: Value is assigned if Amount_Numeric > 0, otherwise 0
-        df["credit"] = np.where(df["Amount_Numeric"] > 0, df["Amount_Numeric"], 0)
-        # DEBIT column: Absolute value is assigned if Amount_Numeric < 0, otherwise 0
-        # The negative amount is converted to a positive debit
-        df["debit"] = np.where(df["Amount_Numeric"] < 0, df["Amount_Numeric"].abs(), 0)
+
+        # Handle 'Fee' column, which might not exist in older exports
+        if 'Fee' in df.columns:
+            df["Fee_Numeric"] = pd.to_numeric(df["Fee"], errors="coerce").fillna(0)
+        else:
+            df["Fee_Numeric"] = 0 # Treat as 0 if column is missing
+
+        # The net amount is Amount - Fee. Fees are always a cost.
+        df["Total_Amount"] = df["Amount_Numeric"] - df["Fee_Numeric"]
+
+        # CREDIT column: Value is assigned if Total_Amount > 0, otherwise 0
+        df["credit"] = np.where(df["Total_Amount"] > 0, df["Total_Amount"], 0)
+        # DEBIT column: Absolute value is assigned if Total_Amount < 0, otherwise 0
+        df["debit"] = np.where(df["Total_Amount"] < 0, df["Total_Amount"].abs(), 0)
         df["date"] = (
             pd.to_datetime(df["Started Date"], format="%Y-%m-%d %H:%M:%S", errors="coerce")
             .dt.normalize()
         )
         df["description"] = pd.Series(df["Description"], dtype="string").str.strip()
         df["balance"] = pd.to_numeric(df["Balance"], errors="coerce")
-
-        # Drop unnecessary columns (some give pyarrow errors due to mixed types)
-        df = df.drop(
-            columns=["Started Date", "Amount", "Description", "Balance", "Amount_Numeric", "State"]
-        )
+        # Drop original and temporary columns to avoid downstream errors
+        cols_to_drop = [
+            "Started Date", "Amount", "Fee", "Description", "Balance", 
+            "Amount_Numeric", "Fee_Numeric", "Total_Amount", "State"
+        ]
+        df = df.drop(columns=[col for col in cols_to_drop if col in df.columns])
 
         # Sort chronologically (Oldest -> Newest), with index tie-breaker
         df = transaction_logic.sort_transactions_chronologically(df, source_is_reverse_chronological=False)
