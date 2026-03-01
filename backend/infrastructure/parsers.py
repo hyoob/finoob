@@ -19,19 +19,59 @@ class BankStrategy:
 # 2. The Implementations (Strategies)
 class PTSBStrategy(BankStrategy):
     def _read_file(self, file_path):
-        # Encapsulate specific reader args here
-        return pd.read_excel(file_path, header=12, skipfooter=1)
+        # Check file extension to decide how to read
+        # file_path is actually a Streamlit UploadedFile object
+        filename = getattr(file_path, "name", "").lower()
+        
+        if filename.endswith(".csv"):
+            return pd.read_csv(file_path)
+        else:
+            # Default to existing Excel logic
+            return pd.read_excel(file_path, header=12, skipfooter=1)
 
     def _normalize(self, df):
-        # Your original PTSB logic
-        df["date"] = pd.to_datetime(df["Date"],format="%d/%m/%Y", errors="coerce")
-        df["debit"] = pd.to_numeric(df["Money Out (€)"], errors="coerce").fillna(0).abs()
-        df["credit"] = pd.to_numeric(df["Money In (€)"], errors="coerce").fillna(0)
-        df["description"] = pd.Series(df["Description"], dtype="string").str.strip()
-        df["balance"] = pd.to_numeric(df["Balance (€)"], errors="coerce")
+        # Normalize column names to handle case sensitivity (Money In vs Money in)
+        df.columns = df.columns.str.strip()
+        
+        # Map columns dynamically to handle case differences
+        col_map = {}
+        for col in df.columns:
+            c_lower = col.lower()
+            if c_lower == "money in (€)":
+                col_map[col] = "credit_raw"
+            elif c_lower == "money out (€)":
+                col_map[col] = "debit_raw"
+            elif c_lower == "balance (€)":
+                col_map[col] = "balance_raw"
+            elif c_lower == "date":
+                col_map[col] = "date_raw"
+            elif c_lower == "description":
+                col_map[col] = "description_raw"
+        
+        df = df.rename(columns=col_map)
 
-        # Drop unnecessary columns (some give pyarrow errors due to mixed types)
-        df = df.drop(columns=["Money Out (€)", "Money In (€)", "Date", "Description"])
+        # Helper to clean currency strings
+        def clean_amount(val):
+            if pd.isna(val): return 0.0
+            if isinstance(val, (int, float)): return float(val)
+            # String cleanup: remove € and ,
+            s = str(val).replace("€", "").replace(",", "").strip()
+            # Handle cases like "-" which might appear in Excel/CSV for zero/empty
+            if s == "-" or s == "": return 0.0
+            try: return float(s)
+            except ValueError: return 0.0
+
+        # Apply cleaning
+        df["debit"] = df["debit_raw"].apply(clean_amount).abs()
+        df["credit"] = df["credit_raw"].apply(clean_amount).abs()
+        df["balance"] = df["balance_raw"].apply(clean_amount)
+        
+        # Date parsing
+        # Excel: DD/MM/YYYY
+        # CSV: DD Mon YYYY (e.g. 16 Feb 2026)
+        df["date"] = pd.to_datetime(df["date_raw"], dayfirst=True, errors="coerce")
+        
+        df["description"] = pd.Series(df["description_raw"], dtype="string").str.strip()
 
         # Sort chronologically (Oldest -> Newest), with index tie-breaker
         df = transaction_logic.sort_transactions_chronologically(df, source_is_reverse_chronological=True)
