@@ -6,7 +6,17 @@ def get_new_transactions(latest_bq_tx, df):
     """
     # Define values for latest transaction in BigQuery
     bq_description = latest_bq_tx["description"]
-    bq_debit = float(latest_bq_tx.get("debit", 0))
+
+    # If the transaction has been reimbursed, BigQuery's 'debit' stores the net amount.
+    # We must match against 'original_debit' to correctly find the corresponding row in the CSV.
+    reimb_info = latest_bq_tx.get("reimbursement")
+    if (isinstance(reimb_info, dict) and 
+        reimb_info.get("has_reimbursement") and 
+        latest_bq_tx.get("original_debit") is not None):
+        bq_debit = float(latest_bq_tx["original_debit"])
+    else:
+        bq_debit = float(latest_bq_tx.get("debit", 0))
+
     bq_credit = float(latest_bq_tx.get("credit", 0))
     bq_balance = float(latest_bq_tx.get("balance") or 0.0) # default to 0.0 if None
     latest_bq_date = pd.to_datetime(latest_bq_tx["date"])
@@ -14,13 +24,27 @@ def get_new_transactions(latest_bq_tx, df):
     # df should already be sorted chronologically (Oldest -> Newest) at this point.    
     # Sorting depends on bank-specific transaction export order, so it's handled in the parser.
 
-    # Find the marker row in uploaded CSV
-    mask = (
+    # 1. Create a mask for financial values (The "Financial Handshake")
+    # This is much more stable than descriptions which banks often change retroactively.
+    financial_mask = (
         (df["date"] == latest_bq_date) &
-        (df["description"] == bq_description) &
         (df["debit"] == bq_debit) &
         (df["credit"] == bq_credit)
     )
+
+    # If the CSV has a balance column, use it as the ultimate tie-breaker
+    if "balance" in df.columns:
+        financial_mask &= (df["balance"] == bq_balance)
+
+    # 2. Try to find an exact match including description first
+    description_mask = (df["description"] == bq_description)
+    exact_match_mask = financial_mask & description_mask
+
+    if exact_match_mask.any():
+        mask = exact_match_mask
+    else:
+        # Fallback: If no exact match, trust the financial handshake
+        mask = financial_mask
 
     if mask.any():
         marker_index = df[mask].index.max()  # last matching row
