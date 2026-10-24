@@ -1,2 +1,20 @@
-# requirements.txt
+# Core UI Framework
+streamlit==1.48.1
+
+# Data Processing
+pandas==2.3.1
+numpy==2.3.2
+
+# Google Cloud & BigQuery
 google-cloud-bigquery==3.35.1
+google-auth==2.40.3
+db-dtypes==1.4.3
+pandas-gbq==0.29.2
+pyarrow==21.0.0
+
+# Financial & Market Data
+yfinance==1.2.0
+
+# Excel File Parsers
+xlrd==2.0.2
+openpyxl>=3.1.0
