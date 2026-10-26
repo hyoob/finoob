@@ -13,6 +13,6 @@ def fetch_expense_candidates(table_id, account_id):
     data = db_client.run_query(query)
     return pd.DataFrame(data) if data else None
 
-def link_reimbursement_to_expense(table_id, reimb_row, expense_row):
+def link_reimbursement_to_expense(table_id, reimb_rows, expense_row):
     """Facade for the write operation."""
-    db_client.link_reimbursement_struct_array(table_id, reimb_row, expense_row)
+    return db_client.link_reimbursement_struct_array(table_id, reimb_rows, expense_row)

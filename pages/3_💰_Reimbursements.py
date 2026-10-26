@@ -14,12 +14,16 @@ st.header("💰 Reimbursements")
 # CHECK FOR AND DISPLAY PERSISTENT STATUS MESSAGE 
 ui.display_status_message()
 
+grid_version = st.session_state.get("reimb_grid_version", 0)
+reimb_grid_key = f"reimb_grid_{grid_version}"
+expense_grid_key = f"expense_grid_{grid_version}"
+
 # Use Streamlit Columns to create the Split Screen
 col1, col2 = st.columns(2)
 
 # --- LEFT COLUMN: REIMBURSEMENTS (INCOMING MONEY) ---
 with col1:
-    st.subheader("1. Select Reimbursement")
+    st.subheader("1. Select Reimbursement(s)")
     # Account Picker
     account_id_reimb = ui.pick_account(
         account_map,
@@ -34,11 +38,13 @@ with col1:
         if df is not None:
             st.session_state.reimbursements_df = df
         else:
+            if 'reimbursements_df' in st.session_state:
+                del st.session_state.reimbursements_df
             st.info("No reimbursements found.")
 
     # Display Dataframe with Selection
     if 'reimbursements_df' in st.session_state:
-        st.caption("Select one credit transaction:")
+        st.caption("Select one or more credit transactions:")
         
         st.dataframe(
             # Filter cols for cleaner view
@@ -46,9 +52,9 @@ with col1:
                 'transaction_number', 'date', 'description', 'credit', 'to_transaction_id'
             ]],
             hide_index=True,
-            selection_mode="single-row", # Critical for matching
+            selection_mode="multi-row",  # Allow selecting multiple reimbursements at once
             on_select="rerun",           # Triggers the match logic immediately
-            key="reimb_grid"
+            key=reimb_grid_key
         )
 
 # --- RIGHT COLUMN: ALL TRANSACTIONS (EXPENSES) ---
@@ -80,20 +86,20 @@ with col2:
             hide_index=True,
             selection_mode="single-row",
             on_select="rerun",
-            key="expense_grid"
+            key=expense_grid_key
         )
 
 # --- MATCHING LOGIC (BOTTOM SECTION) ---
 st.divider()
 
 # Capture Selection Indices from the UI
-r_selection = st.session_state.get("reimb_grid", {}).get("selection", {}).get("rows", [])
-e_selection = st.session_state.get("expense_grid", {}).get("selection", {}).get("rows", [])
+r_selection = st.session_state.get(reimb_grid_key, {}).get("selection", {}).get("rows", [])
+e_selection = st.session_state.get(expense_grid_key, {}).get("selection", {}).get("rows", [])
 
-# Only proceed if BOTH sides have a row selected
+# Only proceed if BOTH sides have at least one row selected
 if len(r_selection) > 0 and len(e_selection) > 0:
-    # Get Reimbursement Row
-    reimb_row = st.session_state.reimbursements_df.iloc[r_selection[0]]
+    # Get Selected Reimbursement Rows (DataFrame)
+    reimb_rows = st.session_state.reimbursements_df.iloc[r_selection]
 
     # Get the search term used in the UI
     current_search = st.session_state.get("search_expense", "")
@@ -104,13 +110,20 @@ if len(r_selection) > 0 and len(e_selection) > 0:
     expense_row = filtered_view.iloc[e_selection[0]]
 
     # Get reimbursement stats for context
-    stats = reimbursement_logic.calculate_reimbursement_impact(reimb_row, expense_row)
+    stats = reimbursement_logic.calculate_reimbursement_impact(reimb_rows, expense_row)
 
     # --- Display the Context Card ---
     st.markdown(f"### 🔗 Add to Reimbursement List?")
     
-    # Show specific description to verify we have the right row
-    st.caption(f"Linking Credit: **{reimb_row['description']}** → Expense: **{expense_row['description']}**")
+    # Show specific description(s) to verify we have the right row(s)
+    if len(reimb_rows) == 1:
+        st.caption(f"Linking Credit: **{reimb_rows.iloc[0]['description']}** → Expense: **{expense_row['description']}**")
+    else:
+        credit_summary = ", ".join(
+            f"{row['description']} (€{float(row['credit']):.2f})"
+            for _, row in reimb_rows.iterrows()
+        )
+        st.caption(f"Linking **{len(reimb_rows)} Credits** ({credit_summary}) → Expense: **{expense_row['description']}**")
 
     if stats["existing_count"] > 0:
         st.info(
@@ -120,19 +133,34 @@ if len(r_selection) > 0 and len(e_selection) > 0:
 
     m1, m2, m3 = st.columns(3)
     m1.metric("Current Net Cost", f"€{stats['current_net']:.2f}")
-    m2.metric("New Reimbursement", f"€{stats['new_amt']:.2f}")
+    reimb_label = f"New Reimbursements ({stats['new_count']})" if stats["new_count"] > 1 else "New Reimbursement"
+    m2.metric(reimb_label, f"€{stats['new_amt']:.2f}")
     m3.metric("Final Net Cost", f"€{stats['final_net']:.2f}", delta=f"-€{stats['new_amt']:.2f}")
 
     # --- The Action Button ---
     if st.button("✅ Confirm & Append", type="primary"):
         with st.spinner("Processing reimbursement..."):
-            reimbursement_service.link_reimbursement_to_expense(table_id, reimb_row, expense_row)
-        st.session_state.status_message = "🎉 Reimbursement linked successfully!"
+            success = reimbursement_service.link_reimbursement_to_expense(table_id, reimb_rows, expense_row)
+            if success:
+                # Refresh cached dataframes so the UI immediately reflects the updated state
+                updated_reimb_df = reimbursement_service.fetch_reimbursement_candidates(table_id, account_id_reimb)
+                if updated_reimb_df is not None:
+                    st.session_state.reimbursements_df = updated_reimb_df
+                elif 'reimbursements_df' in st.session_state:
+                    del st.session_state.reimbursements_df
+
+                updated_all_tx_df = reimbursement_service.fetch_expense_candidates(table_id, account_id_all)
+                if updated_all_tx_df is not None:
+                    st.session_state.all_tx_df = updated_all_tx_df
+                elif 'all_tx_df' in st.session_state:
+                    del st.session_state.all_tx_df
+
+                st.session_state.reimb_grid_version = grid_version + 1
         st.rerun()
 
 elif len(r_selection) > 0:
     st.info("👈 Now select the matching expense on the right.")
 elif len(e_selection) > 0:
-    st.info("👉 Now select the reimbursement on the left.")
+    st.info("👉 Now select the reimbursement(s) on the left.")
 else:
-    st.info("👆 Select one row from the left and one row from the right to link them.")
+    st.info("👆 Select one or more rows from the left and one row from the right to link them.")

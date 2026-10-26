@@ -79,11 +79,23 @@ def get_all_expenses_query(table_id, account_id_all):
         LIMIT 1000
     """
 
-def link_reimbursement_struct_array(table_id, e_composite_id, r_id, r_acc, r_amt, r_composite_id, e_id, e_acc):
+def link_reimbursement_struct_array(table_id, e_composite_id, reimb_items, total_r_amt, e_id, e_acc):
+    credit_where_clause = " OR ".join(
+        f"(transaction_number = {item['r_id']} AND account_id = '{item['r_acc']}')"
+        for item in reimb_items
+    )
+    reimbursement_structs_sql = ",\n                    ".join(
+        f"""STRUCT(
+                        '{item['r_composite_id']}' AS from_transaction_id, 
+                        {item['r_amt']} AS amount, 
+                        CURRENT_TIMESTAMP() AS linked_at
+                    )"""
+        for item in reimb_items
+    )
     return f"""
         BEGIN TRANSACTION;
 
-        -- A. Update the Credit Row (The Reimbursement)
+        -- A. Update the Credit Row(s) (The Reimbursements)
         UPDATE `{table_id}`
         SET 
             reimbursement = STRUCT(
@@ -95,14 +107,14 @@ def link_reimbursement_struct_array(table_id, e_composite_id, r_id, r_acc, r_amt
             ),
             last_updated = CURRENT_TIMESTAMP()
         WHERE 
-            transaction_number = {r_id} AND account_id = '{r_acc}';
+            {credit_where_clause};
 
         -- B. Update the Debit Row (The Expense)
         UPDATE `{table_id}`
         SET 
             -- Audit Trail: If original_debit is NULL, grab the current debit. If set, keep it.
             original_debit = COALESCE(original_debit, debit),
-            debit = ROUND(debit - {r_amt}, 2),
+            debit = ROUND(debit - {total_r_amt}, 2),
             reimbursement = STRUCT(
                 FALSE AS is_reimbursement,
                 TRUE AS has_reimbursement,
@@ -112,11 +124,7 @@ def link_reimbursement_struct_array(table_id, e_composite_id, r_id, r_acc, r_amt
                 -- Append to the array
                 ARRAY_CONCAT(
                     COALESCE(reimbursement.reimbursement_list, []), 
-                    [STRUCT(
-                        '{r_composite_id}' AS from_transaction_id, 
-                        {r_amt} AS amount, 
-                        CURRENT_TIMESTAMP() AS linked_at
-                    )]
+                    [{reimbursement_structs_sql}]
                 ) AS reimbursement_list
             ),
             last_updated = CURRENT_TIMESTAMP()

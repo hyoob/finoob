@@ -89,33 +89,55 @@ def run_update_logic(edited_df, table_id):
         
         st.rerun()
 
-def link_reimbursement_struct_array(table_id, reimb_row, expense_row):
+def link_reimbursement_struct_array(table_id, reimb_rows, expense_row):
     """
-    Links a credit to a debit using the nested 'reimbursement' struct schema.
+    Links one or more credits to a debit using the nested 'reimbursement' struct schema.
     """
     client = get_client()
 
     try:
-        r_id = reimb_row['transaction_number'] 
-        r_acc = reimb_row['account_id']            
-        r_amt = float(reimb_row['credit'])      
+        if isinstance(reimb_rows, pd.DataFrame):
+            records = reimb_rows.to_dict('records')
+        elif isinstance(reimb_rows, pd.Series):
+            records = [reimb_rows.to_dict()]
+        elif isinstance(reimb_rows, list):
+            records = reimb_rows
+        else:
+            records = [dict(reimb_rows)]
 
-        e_id = expense_row['transaction_number']
+        reimb_items = []
+        for row in records:
+            r_id = int(row['transaction_number'])
+            r_acc = row['account_id']
+            r_amt = round(float(row['credit']), 2)
+            reimb_items.append({
+                'r_id': r_id,
+                'r_acc': r_acc,
+                'r_amt': r_amt,
+                'r_composite_id': f"{r_acc}:{r_id}"
+            })
+
+        total_r_amt = round(sum(item['r_amt'] for item in reimb_items), 2)
+
+        e_id = int(expense_row['transaction_number'])
         e_acc = expense_row['account_id']
-        r_composite_id = f"{r_acc}:{r_id}"
         e_composite_id = f"{e_acc}:{e_id}"
 
         query = queries.link_reimbursement_struct_array(
-            table_id, e_composite_id, r_id, r_acc, r_amt, r_composite_id, e_id, e_acc
+            table_id, e_composite_id, reimb_items, total_r_amt, e_id, e_acc
         )
         
         job = client.query(query)
         job.result() 
         
-        st.session_state.status_message = f"🎉 Linked! Added reimbursement of €{r_amt} to the list."
+        count = len(reimb_items)
+        label = "reimbursement" if count == 1 else f"{count} reimbursements"
+        st.session_state.status_message = f"🎉 Linked! Added {label} totaling €{total_r_amt:.2f} to the list."
+        return True
         
     except Exception as e:
         st.session_state.status_message = f"Error linking transactions: {e}"
+        return False
 
 def insert_transactions(table_id, df):
     client = get_client()
