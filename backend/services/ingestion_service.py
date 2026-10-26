@@ -1,8 +1,33 @@
-from backend.infrastructure import local_storage, parsers, db_client, queries
+from datetime import timedelta
+from backend.infrastructure import local_storage, parsers, db_client, queries, enable_banking_client
 from backend.domain import account_logic, categorization_logic, transaction_logic
 from backend.services import accounts_service
 import pandas as pd
 import config
+
+
+def _deduplicate_and_categorize(df, table_id, account_id, category_data):
+    """Shared pipeline: compares normalized df against latest BigQuery transaction and categorizes new rows."""
+    rows = db_client.run_query(queries.get_latest_transaction_query(table_id, account_id))
+    latest_bq_tx = rows[0] if rows else None
+
+    if latest_bq_tx:
+        new_transactions, warning, latest_bq_date = transaction_logic.get_new_transactions(
+            latest_bq_tx,
+            df
+        )
+    else:
+        new_transactions = df.copy()
+        if "balance" not in new_transactions.columns and not new_transactions.empty:
+            new_transactions["balance"] = (new_transactions["credit"] - new_transactions["debit"]).cumsum()
+        warning = "No transactions found in BigQuery. Keeping all rows."
+        latest_bq_date = None
+
+    if not new_transactions.empty:
+        categorization_logic.categorize_transactions(new_transactions, category_data)
+
+    return new_transactions, warning, latest_bq_date
+
 
 def process_transaction_upload(account_id, table_id, uploaded_file, category_data):
     """Facade 1: Handles the READ workflow (File -> DB Check -> New Data)."""
@@ -26,27 +51,40 @@ def process_transaction_upload(account_id, table_id, uploaded_file, category_dat
 
     print(f"Processed {len(df)} rows for {account_id}")
 
-    # Query the latest transaction from BigQuery for this account
-    rows = db_client.run_query(queries.get_latest_transaction_query(table_id, account_id)) 
-    
+    return _deduplicate_and_categorize(df, table_id, account_id, category_data)
+
+
+def process_api_transaction_sync(account_id, table_id, category_data, lookback_days_padding=14):
+    """
+    Fetches transactions via Enable Banking API for the given account,
+    normalizes them, deduplicates against BigQuery, and auto-categorizes new rows.
+    Returns (new_transactions, warning, latest_bq_date, raw_normalized_df).
+    """
+    account_data = local_storage.load_json_data(config.ACCOUNTS_PATH)
+    account_uid = account_logic.get_enable_banking_uid(account_data, account_id)
+    if not account_uid:
+        raise ValueError(f"Account '{account_id}' is not linked to an Enable Banking account UID yet.")
+
+    # Check latest transaction in BigQuery to set a sensible date_from window
+    rows = db_client.run_query(queries.get_latest_transaction_query(table_id, account_id))
     latest_bq_tx = rows[0] if rows else None
 
-    if latest_bq_tx:
-        # Get new transactions after the latest BQ transaction
-        new_transactions, warning, latest_bq_date = transaction_logic.get_new_transactions(
-            latest_bq_tx, 
-            df
-        )
-    else:
-        new_transactions = df
-        warning = "No transactions found in BigQuery. Keeping all CSV rows."
-        latest_bq_date = None
-    
-    if not new_transactions.empty:
-        # Categorize the new transactions
-        categorization_logic.categorize_transactions(new_transactions, category_data)
-    
-    return new_transactions, warning, latest_bq_date
+    date_from = None
+    if latest_bq_tx and latest_bq_tx.get("date"):
+        latest_date = pd.to_datetime(latest_bq_tx["date"]).date()
+        date_from = (latest_date - timedelta(days=lookback_days_padding)).strftime("%Y-%m-%d")
+
+    raw_txs = enable_banking_client.fetch_raw_transactions(account_uid, date_from=date_from)
+    bank = account_logic.get_bank_from_account(account_data, account_id)
+    df = enable_banking_client.normalize_transactions(raw_txs, bank=bank)
+
+    if df.empty:
+        return df, None, (pd.to_datetime(latest_bq_tx["date"]) if latest_bq_tx else None), df
+
+    new_transactions, warning, latest_bq_date = _deduplicate_and_categorize(
+        df, table_id, account_id, category_data
+    )
+    return new_transactions, warning, latest_bq_date, df
 
 def save_transactions_workflow(table_id, account_id, edited_df):
     """

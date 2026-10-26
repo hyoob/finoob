@@ -55,3 +55,35 @@ def update_account_balance(acc_id, new_balance):
     except Exception as e:
         print(f"Service Error: Could not update balance for {acc_id}: {e}")
         return False
+
+
+def get_account_details(acc_id):
+    """Returns the dictionary of details for a single account."""
+    raw_data = local_storage.load_json_data(config.ACCOUNTS_PATH)
+    return raw_data.get(acc_id, {})
+
+
+def link_enable_banking_account(acc_id, account_uid, valid_until=None, iban=None, sync_both_envs=True):
+    """
+    Saves the Enable Banking account_uid to the current environment's accounts file
+    (and optionally mirrors the UID to both dev and prod account files so you only link once).
+    """
+    import os
+    paths = [config.ACCOUNTS_PATH]
+    if sync_both_envs:
+        for p in (config.ACCOUNTS_DEV_PATH, config.ACCOUNTS_PROD_PATH):
+            if p not in paths and os.path.exists(p):
+                paths.append(p)
+
+    success = False
+    for path in paths:
+        try:
+            data = local_storage.load_json_data(path)
+            if account_logic.set_enable_banking_uid(data, acc_id, account_uid, valid_until=valid_until, iban=iban):
+                local_storage.save_data(path, data)
+                if path == config.ACCOUNTS_PATH:
+                    success = True
+        except Exception as e:
+            print(f"Warning: Could not save Enable Banking UID to {path}: {e}")
+
+    return success

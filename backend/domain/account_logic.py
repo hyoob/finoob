@@ -67,3 +67,20 @@ def get_account_name(account_data, account_id):
     """Retrieves the account name for a given account."""
     name = account_data.get(account_id, {}).get("account_name", None)
     return name
+
+
+def get_enable_banking_uid(account_data, account_id):
+    """Retrieves the Enable Banking account UID for a given account, if linked."""
+    return account_data.get(account_id, {}).get("enable_banking_uid", None)
+
+
+def set_enable_banking_uid(account_data, account_id, account_uid, valid_until=None, iban=None):
+    """Links an Enable Banking account UID to a Finoob account."""
+    if account_id in account_data:
+        account_data[account_id]["enable_banking_uid"] = account_uid
+        if valid_until:
+            account_data[account_id]["enable_banking_valid_until"] = valid_until
+        if iban:
+            account_data[account_id]["enable_banking_iban"] = iban
+        return True
+    return False

@@ -42,9 +42,19 @@ def get_new_transactions(latest_bq_tx, df):
 
     if exact_match_mask.any():
         mask = exact_match_mask
-    else:
-        # Fallback: If no exact match, trust the financial handshake
+    elif financial_mask.any():
+        # Fallback 1: If no exact match, trust the same-day financial handshake
         mask = financial_mask
+    else:
+        # Fallback 2: Allow up to 4 days difference for weekend settlement (booking_date vs value_date)
+        # when amount AND (balance or description) match
+        near_date_mask = (df["date"] - latest_bq_date).abs() <= pd.Timedelta(days=4)
+        amount_mask = (df["debit"] == bq_debit) & (df["credit"] == bq_credit)
+        if "balance" in df.columns:
+            tiebreaker_mask = (df["balance"] == bq_balance) | description_mask
+        else:
+            tiebreaker_mask = description_mask
+        mask = near_date_mask & amount_mask & tiebreaker_mask
 
     if mask.any():
         marker_index = df[mask].index.max()  # last matching row
@@ -71,12 +81,19 @@ def get_new_transactions(latest_bq_tx, df):
     else:
         # If not found, assume all CSV rows are new
         # Return all rows and a warning message
+        new_transactions = df.copy()
+        if "balance" not in new_transactions.columns:
+            start_balance = bq_balance if bq_balance is not None else 0.0
+            new_transactions["balance"] = start_balance + (
+                new_transactions["credit"] - new_transactions["debit"]
+            ).cumsum()
+
         warning_message = (
-            "⚠️ Could not find the last BQ transaction in the CSV. "
+            "⚠️ Could not find the last BQ transaction in the CSV/API data. "
             "Keeping all rows."
         )
 
-        return df, warning_message, latest_bq_date
+        return new_transactions, warning_message, latest_bq_date
 
 # --- 4. Helper for diffing rows ---
 def get_changed_rows(original_df, edited_df, data_cols):

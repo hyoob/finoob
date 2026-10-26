@@ -9,6 +9,8 @@ def clear_session_state_data():
         del st.session_state.uncategorized_df
     if 'reimbursements_df' in st.session_state:
         del st.session_state.reimbursements_df
+    if 'api_sync_result' in st.session_state:
+        del st.session_state.api_sync_result
     # Optional: Clear the success/error message too
     if 'status_message' in st.session_state:
         st.session_state.status_message = None
