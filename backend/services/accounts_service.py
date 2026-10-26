@@ -1,4 +1,5 @@
-from backend.infrastructure import local_storage
+import pandas as pd
+from backend.infrastructure import local_storage, db_client, queries, enable_banking_client
 from backend.domain import account_logic
 import config
 
@@ -87,3 +88,82 @@ def link_enable_banking_account(acc_id, account_uid, valid_until=None, iban=None
             print(f"Warning: Could not save Enable Banking UID to {path}: {e}")
 
     return success
+
+
+def run_accounts_health_audit(table_id, show_archived=False):
+    """
+    Compares each account's balance across 3 sources of truth:
+      1. Local accounts JSON (accounts.json / accounts_dev.json)
+      2. BigQuery latest transaction balance (by max transaction_number)
+      3. Live Open Banking API booked balance (if linked via Enable Banking)
+    Returns a pandas DataFrame with the comparison and sync status per account.
+    """
+    raw_data = local_storage.load_json_data(config.ACCOUNTS_PATH)
+    bq_rows = db_client.run_query(queries.get_all_accounts_latest_balance_query(table_id))
+    bq_map = {r["account_id"]: r for r in bq_rows} if bq_rows else {}
+
+    audit_rows = []
+    for acc_id, details in raw_data.items():
+        is_active = bool(details.get("active", False))
+        if not is_active and not show_archived:
+            continue
+
+        acc_name = details.get("account_name", acc_id)
+        local_bal = round(float(details.get("balance") or 0.0), 2)
+
+        bq_info = bq_map.get(acc_id)
+        bq_bal = (
+            round(float(bq_info["balance"]), 2)
+            if bq_info and bq_info.get("balance") is not None
+            else None
+        )
+        bq_last_date = (
+            str(bq_info["date"])
+            if bq_info and bq_info.get("date") is not None
+            else "—"
+        )
+
+        eb_uid = details.get("enable_banking_uid")
+        api_bal = None
+        api_bal_type = None
+        if eb_uid and enable_banking_client.is_configured():
+            eb_res = enable_banking_client.fetch_booked_balance(eb_uid)
+            if eb_res and eb_res.get("amount") is not None:
+                api_bal = round(float(eb_res["amount"]), 2)
+                api_bal_type = eb_res.get("type")
+
+        local_vs_bq_diff = round(local_bal - bq_bal, 2) if bq_bal is not None else None
+        ref_bal = bq_bal if bq_bal is not None else local_bal
+        bank_diff = round(api_bal - ref_bal, 2) if api_bal is not None else None
+
+        if bq_bal is not None and abs(local_vs_bq_diff) > 0.01:
+            if api_bal is not None and abs(api_bal - bq_bal) <= 0.01:
+                status = f"⚠️ Local JSON out of sync with BQ ({local_vs_bq_diff:+,.2f} €)"
+            elif api_bal is not None and abs(api_bal - bq_bal) > 0.01:
+                status = f"🚨 BQ & Local out of sync (Bank vs BQ: {bank_diff:+,.2f} €)"
+            else:
+                status = f"⚠️ Local vs BQ mismatch ({local_vs_bq_diff:+,.2f} €)"
+        else:
+            if api_bal is not None:
+                if abs(bank_diff) <= 0.01:
+                    status = "✅ Fully Synced (Local = BQ = Bank)"
+                else:
+                    status = f"🔄 Pending Import (Bank vs BQ: {bank_diff:+,.2f} €)"
+            elif bq_bal is not None:
+                status = "✅ Synced (Local = BQ)"
+            else:
+                status = "ℹ️ Manual Only (No BQ Tx)"
+
+        audit_rows.append({
+            "account_id": acc_id,
+            "account_name": acc_name,
+            "active": is_active,
+            "local_balance": local_bal,
+            "bq_balance": bq_bal,
+            "live_bank_balance": api_bal,
+            "bank_balance_type": api_bal_type or "—",
+            "last_bq_date": bq_last_date,
+            "status": status,
+        })
+
+    return pd.DataFrame(audit_rows)

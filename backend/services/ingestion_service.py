@@ -107,8 +107,8 @@ def save_transactions_workflow(table_id, account_id, edited_df):
     edited_df["month"] = pd.to_datetime(edited_df["date"]).dt.to_period("M").astype(str)
     edited_df["transaction_type"] = edited_df.apply(transaction_logic.classify_transaction, axis=1)
 
-    # Ensure transactions are sorted chronologically
-    edited_df = edited_df.sort_values(by="date", ascending=True).reset_index(drop=True)
+    # Ensure transactions are sorted chronologically while preserving same-day order
+    edited_df = edited_df.sort_values(by="date", ascending=True, kind="stable").reset_index(drop=True)
 
     # Get current max transaction_number for the account
     start_num = db_client.get_max_transaction_number(table_id, account_id)
@@ -145,3 +145,39 @@ def save_transactions_workflow(table_id, account_id, edited_df):
             print(f"Warning: Transactions saved, but account balance update failed for {account_id}")
 
     return len(edited_df), update_success, error_msg
+
+
+def get_reconciliation_context(account_id, table_id):
+    """
+    Fetches the latest BigQuery transaction and (if linked to Open Banking) the live
+    booked bank balance for pre-save reconciliation.
+    """
+    rows = db_client.run_query(queries.get_latest_transaction_query(table_id, account_id))
+    latest_bq_tx = rows[0] if rows else None
+
+    account_data = local_storage.load_json_data(config.ACCOUNTS_PATH)
+    account_uid = account_logic.get_enable_banking_uid(account_data, account_id)
+
+    live_bank_balance = None
+    if account_uid and enable_banking_client.is_configured():
+        live_bank_balance = enable_banking_client.fetch_booked_balance(account_uid)
+
+    return {
+        "latest_bq_tx": latest_bq_tx,
+        "live_bank_balance": live_bank_balance,
+    }
+
+
+def validate_transactions_before_save(account_id, table_id, edited_df, warning=None, context=None):
+    """
+    Runs all pre-save safety net validations on edited_df against BigQuery and live bank balance.
+    """
+    if context is None:
+        context = get_reconciliation_context(account_id, table_id)
+
+    return transaction_logic.validate_import_batch(
+        edited_df,
+        latest_bq_tx=context.get("latest_bq_tx"),
+        live_bank_balance=context.get("live_bank_balance"),
+        marker_warning=warning,
+    )

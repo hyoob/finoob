@@ -20,6 +20,18 @@ def get_latest_transaction_query(table_id, account_id):
         LIMIT 1
     """
 
+
+def get_all_accounts_latest_balance_query(table_id):
+    return f"""
+        SELECT
+            account_id,
+            date,
+            balance,
+            transaction_number
+        FROM `{table_id}`
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY account_id ORDER BY transaction_number DESC, date DESC) = 1
+    """
+
 def get_max_transaction_id_query(table_id, account_id):
     return f"""
         SELECT MAX(transaction_number) as max_num

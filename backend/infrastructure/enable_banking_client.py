@@ -171,6 +171,53 @@ def fetch_account_balances(account_uid):
     return _api_request("GET", f"/accounts/{account_uid}/balances")
 
 
+def fetch_booked_balance(account_uid):
+    """
+    Fetches the booked/ledger balance for an account_uid from Enable Banking.
+    Prioritizes booked ledger balance types ('CLBD', 'INFO', 'XPCD') over
+    intraday available balances ('ITBD', 'ITAV') that include pending card holds.
+    Returns dict {'booked_balance': float, 'balance_type': str, 'reference_date': str} or None.
+    """
+    try:
+        resp = fetch_account_balances(account_uid)
+        balances = resp.get("balances", [])
+        if not balances:
+            return None
+
+        priority_order = {"CLBD": 0, "INFO": 1, "XPCD": 2, "ITAV": 3, "ITBD": 4}
+        parsed = []
+        for idx, b in enumerate(balances):
+            btype = b.get("balance_type", "")
+            amt_obj = b.get("balance_amount") or {}
+            try:
+                amt = round(float(amt_obj.get("amount")), 2)
+            except (ValueError, TypeError):
+                continue
+            prio = priority_order.get(btype, 10 + idx)
+            parsed.append({
+                "priority": prio,
+                "booked_balance": amt,
+                "balance_type": btype,
+                "reference_date": b.get("reference_date"),
+            })
+
+        if not parsed:
+            return None
+
+        parsed.sort(key=lambda x: x["priority"])
+        best = parsed[0]
+        return {
+            "amount": best["booked_balance"],
+            "type": best["balance_type"],
+            "booked_balance": best["booked_balance"],
+            "balance_type": best["balance_type"],
+            "reference_date": best["reference_date"],
+        }
+    except Exception as e:
+        print(f"Warning: Could not fetch booked balance for {account_uid}: {e}")
+        return None
+
+
 def _extract_description(tx):
     """Extracts a clean transaction description from an Enable Banking transaction record."""
     remittance = tx.get("remittance_information")

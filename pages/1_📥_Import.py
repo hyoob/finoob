@@ -1,12 +1,14 @@
 import importlib
 import traceback
+import pandas as pd
 import streamlit as st
 import ui
 from backend.domain import account_logic, categorization_logic, transaction_logic
-from backend.infrastructure import enable_banking_client
+from backend.infrastructure import enable_banking_client, queries
 from backend.services import accounts_service, app_service, ingestion_service
 
 # Ensure updated backend modules are reloaded in an already-running Streamlit server
+importlib.reload(queries)
 importlib.reload(account_logic)
 importlib.reload(transaction_logic)
 importlib.reload(categorization_logic)
@@ -38,7 +40,27 @@ def _render_transactions_editor_and_save(new_transactions, warning, latest_bq_da
     st.write(header_text)
 
     if new_transactions.empty:
-        st.info("No new transactions found.")
+        ctx_key = f"recon_ctx_{account_id}_{table_id}"
+        if ctx_key not in st.session_state:
+            st.session_state[ctx_key] = ingestion_service.get_reconciliation_context(account_id, table_id)
+        val = ingestion_service.validate_transactions_before_save(
+            account_id, table_id, new_transactions, warning=warning, context=st.session_state[ctx_key]
+        )
+        if val["live_bank_balance"] is not None:
+            if val["bank_balance_ok"]:
+                st.success(
+                    f"✅ No new transactions found. BigQuery balance ({val['start_balance']:,.2f} €) "
+                    f"matches Live Bank Balance ({val['live_bank_balance']:,.2f} €)."
+                )
+            else:
+                st.error(
+                    f"🚨 No new transactions after {latest_bq_date.date() if latest_bq_date else 'last sync'}, "
+                    f"but BigQuery balance ({val['start_balance']:,.2f} €) does NOT match Live Bank Balance "
+                    f"({val['live_bank_balance']:,.2f} €, diff: {val['bank_balance_diff']:+,.2f} €)! "
+                    "Check for missing historical transactions in this table."
+                )
+        else:
+            st.info("No new transactions found.")
         return
 
     st.success(f"✅ Found {len(new_transactions)} new transactions.")
@@ -55,7 +77,68 @@ def _render_transactions_editor_and_save(new_transactions, warning, latest_bq_da
     )
 
     if not edited_df.empty:
-        if st.button(f"💾 Save {len(edited_df)} transactions to BigQuery", type="primary", key=f"{key_prefix}_save_btn"):
+        # Cache reconciliation context per (account_id, table_id) so editing cells in st.data_editor stays instant
+        ctx_key = f"recon_ctx_{account_id}_{table_id}"
+        if ctx_key not in st.session_state:
+            st.session_state[ctx_key] = ingestion_service.get_reconciliation_context(account_id, table_id)
+
+        val = ingestion_service.validate_transactions_before_save(
+            account_id,
+            table_id,
+            edited_df,
+            warning=warning,
+            context=st.session_state[ctx_key],
+        )
+
+        st.markdown("#### 🛡️ Pre-Save Balance & Integrity Check")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Last BQ Balance", f"{val['start_balance']:,.2f} €")
+        m2.metric("Batch Net Change", f"{val['net_change']:+,.2f} €")
+        m3.metric(
+            "Batch Closing Balance",
+            f"{val['actual_closing_balance']:,.2f} €",
+            delta="Continuity OK" if val["continuity_ok"] else f"{val['continuity_diff']:+,.2f} € vs expected",
+            delta_color="normal" if val["continuity_ok"] else "inverse",
+        )
+        if val["live_bank_balance"] is not None:
+            b_type = f" ({val['live_bank_balance_type']})" if val.get("live_bank_balance_type") else ""
+            m4.metric(
+                f"Live Bank Balance{b_type}",
+                f"{val['live_bank_balance']:,.2f} €",
+                delta="Matches Bank" if val["bank_balance_ok"] else f"{val['bank_balance_diff']:+,.2f} € diff",
+                delta_color="normal" if val["bank_balance_ok"] else "inverse",
+            )
+        else:
+            m4.metric("Live Bank Balance", "N/A", help="No live Open Banking balance available for this account.")
+
+        can_save = True
+        if val["all_passed"]:
+            st.success(
+                "🛡️ **All 4 safety checks passed:** Handshake marker matched, boundary balance continuous, "
+                "row-by-row running balances intact"
+                + (", and closing balance matches live bank API." if val["live_bank_balance"] is not None else ".")
+            )
+        else:
+            for issue in val["issues"]:
+                st.error(f"🚨 {issue}")
+
+            if val["row_breaks"]:
+                with st.expander(f"🔍 View {len(val['row_breaks'])} Running Balance Break(s)", expanded=True):
+                    st.dataframe(pd.DataFrame(val["row_breaks"]), use_container_width=True, hide_index=True)
+
+            override_approved = st.checkbox(
+                "⚠️ I have reviewed the discrepancy/warning above and want to save to BigQuery anyway",
+                value=False,
+                key=f"{key_prefix}_override_chk",
+            )
+            can_save = override_approved
+
+        if st.button(
+            f"💾 Save {len(edited_df)} transactions to BigQuery",
+            type="primary",
+            disabled=not can_save,
+            key=f"{key_prefix}_save_btn",
+        ):
             with st.spinner("Saving transactions to BigQuery..."):
                 count, update_success, error_msg = ingestion_service.save_transactions_workflow(
                     table_id, account_id, edited_df
@@ -64,6 +147,8 @@ def _render_transactions_editor_and_save(new_transactions, warning, latest_bq_da
                 st.success(f"🎉 Successfully inserted {count} rows into `{table_id}`")
                 if "api_sync_result" in st.session_state:
                     del st.session_state.api_sync_result
+                if ctx_key in st.session_state:
+                    del st.session_state[ctx_key]
             else:
                 st.error(f"🚨 Net worth table update failed: {error_msg}")
 
@@ -189,6 +274,7 @@ if tab_api is not None:
                         new_tx, warn, latest_dt, raw_df = ingestion_service.process_api_transaction_sync(
                             account_id, table_id, categories
                         )
+                        st.session_state.pop(f"recon_ctx_{account_id}_{table_id}", None)
                         st.session_state.api_sync_result = {
                             "new_transactions": new_tx,
                             "warning": warn,
