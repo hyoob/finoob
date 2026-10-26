@@ -139,14 +139,30 @@ def get_keywords_editor_config():
     return {
         "keyword": st.column_config.TextColumn(
             "Keyword in Bank Statement",
-            help="Text to search for (e.g., 'NETFLIX')",
+            help="Case-insensitive whole-word match by default. Use '*' at start/end for prefix/suffix/substring matching (e.g., 'DELIVERO*' or '*SPAR*').",
             required=True
         ),
         "label": st.column_config.TextColumn(
             "Clean Label",
             help="What it should be renamed to (e.g., 'Netflix Subscription')",
             required=True
-        )
+        ),
+        "min_amount": st.column_config.NumberColumn(
+            "Min Amount (€)",
+            help="Optional minimum transaction amount. Set equal to Max Amount for an exact amount match.",
+            min_value=0.0,
+            step=0.01,
+            format="€%.2f",
+            required=False
+        ),
+        "max_amount": st.column_config.NumberColumn(
+            "Max Amount (€)",
+            help="Optional maximum transaction amount. Set equal to Min Amount for an exact amount match.",
+            min_value=0.0,
+            step=0.01,
+            format="€%.2f",
+            required=False
+        ),
     }
 
 def get_accounts_table_config():

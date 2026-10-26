@@ -67,6 +67,11 @@ with st.expander("🗑️ Remove Category"):
 
 # --- SECTION 3: EDIT KEYWORDS (REWRITTEN) ---
 st.header("📂 Manage Keywords")
+st.caption(
+    "💡 **Matching tips:** Keywords match whole words (case-insensitive) by default. "
+    "Use `*` at the start/end for partial word matches (e.g. `DELIVERO*`, `*SPAR*`). "
+    "Set **Min / Max Amount** (or set both to the same value for an exact amount) to create amount-specific rules."
+)
 
 all_categories = list(st.session_state.manage_cats.keys())
 
@@ -174,7 +179,8 @@ if col1.button("💾 Save Changes", type="primary"):
     success, error_text = rules_service.update_rules(st.session_state.manage_cats)
 
     if success:
-        # 3. Update Snapshot (Make the new state the clean state)
+        # 3. Clear cached global context and update snapshot (Make the new state the clean state)
+        st.cache_data.clear()
         st.session_state.manage_cats_snapshot = copy.deepcopy(st.session_state.manage_cats)
         
         # 4. Notify & Rerun
