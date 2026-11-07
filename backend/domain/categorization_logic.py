@@ -196,10 +196,40 @@ def recategorize_uncategorized_rows(df, category_data):
     return len(matched_indices)
 
 
+def get_uncategorized_mask(df):
+    """
+    Returns a boolean Series True for rows where 'category' is missing, empty, or 'TBD'.
+    """
+    if df is None or df.empty:
+        return pd.Series(dtype=bool)
+    return (
+        df["category"].isna()
+        | (df["category"].astype(str).str.strip() == "")
+        | (df["category"].astype(str).str.strip() == "TBD")
+    )
+
+
 def ensure_rule_columns(df):
-    """Ensures UI rule-creation columns ('save_as_rule', 'rule_keyword') exist on df."""
+    """Ensures UI rule-creation columns ('save_as_rule', 'rule_keyword', '_row_id') exist on df."""
     if df is None or df.empty:
         return df
+    if "_row_id" not in df.columns:
+        if "account_id" in df.columns:
+            df["_row_id"] = [f"{df.iloc[i]['account_id']}_r_{i}" for i in range(len(df))]
+        else:
+            df["_row_id"] = [f"r_{i}" for i in range(len(df))]
+    else:
+        missing_ids = df["_row_id"].isna() | (df["_row_id"].astype(str).str.strip() == "")
+        if missing_ids.any():
+            for idx in df.index[missing_ids]:
+                prefix = str(df.at[idx, "account_id"]) if "account_id" in df.columns else "r"
+                df.at[idx, "_row_id"] = f"{prefix}_new_{idx}"
+        elif "account_id" in df.columns:
+            # Ensure _row_id is prefixed with account_id if it was generated before account_id was inserted
+            first_id = str(df.iloc[0]["_row_id"])
+            first_acc = str(df.iloc[0]["account_id"])
+            if not first_id.startswith(f"{first_acc}_"):
+                df["_row_id"] = [f"{df.iloc[i]['account_id']}_{df.iloc[i]['_row_id']}" for i in range(len(df))]
     if "save_as_rule" not in df.columns:
         df["save_as_rule"] = False
     else:
@@ -212,10 +242,56 @@ def ensure_rule_columns(df):
 
 
 def strip_rule_columns(df):
-    """Drops UI-only rule-creation columns before saving transactions to BigQuery."""
+    """Drops UI-only rule-creation and row-tracking columns before saving transactions to BigQuery."""
     if df is None:
         return df
-    return df.drop(columns=["save_as_rule", "rule_keyword"], errors="ignore")
+    return df.drop(columns=["save_as_rule", "rule_keyword", "_row_id"], errors="ignore")
+
+
+def merge_edited_subset_into_master(master_df, shown_row_ids, edited_subset_df):
+    """
+    Merges edits from a filtered st.data_editor (edited_subset_df) back into master_df
+    using '_row_id', preserving all hidden rows in master_df in their original order.
+    """
+    if master_df is None or master_df.empty:
+        return edited_subset_df
+
+    master_copy = ensure_rule_columns(master_df.copy())
+    if edited_subset_df is None:
+        return master_copy
+
+    shown_set = set(str(rid) for rid in (shown_row_ids or []))
+    edited_copy = edited_subset_df.copy()
+
+    if "_row_id" not in edited_copy.columns:
+        return edited_copy
+
+    # Map edited rows by _row_id
+    edited_by_id = {}
+    new_added_rows = []
+    for _, erow in edited_copy.iterrows():
+        rid = erow.get("_row_id")
+        if rid is None or pd.isna(rid) or str(rid).strip() == "":
+            new_added_rows.append(erow)
+        else:
+            edited_by_id[str(rid)] = erow
+
+    kept_rows = []
+    for _, mrow in master_copy.iterrows():
+        rid = str(mrow.get("_row_id"))
+        if rid in shown_set:
+            if rid in edited_by_id:
+                kept_rows.append(edited_by_id[rid])
+            # else: user deleted this row inside the filtered editor -> omit it
+        else:
+            kept_rows.append(mrow)
+
+    kept_rows.extend(new_added_rows)
+    if not kept_rows:
+        return master_copy.iloc[0:0].copy()
+
+    merged_df = pd.DataFrame(kept_rows).reset_index(drop=True)
+    return ensure_rule_columns(merged_df)
 
 
 def extract_checked_rules_from_df(df):

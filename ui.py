@@ -121,15 +121,11 @@ def get_import_editor_config(category_options, include_account_col=False):
         ),
         "save_as_rule": st.column_config.CheckboxColumn(
             "➕ Rule",
-            help="Tick to save this row's Category + Label + Rule Keyword (or Description if blank) as a permanent categorization rule.",
+            help="Tick to stage a categorization rule for this row below the table (pre-filled with its Description).",
             width="small",
         ),
-        "rule_keyword": st.column_config.TextColumn(
-            "Rule Keyword",
-            help="Optional keyword pattern (use leading/trailing '*' for wildcards). If left blank when '➕ Rule' is ticked, defaults to the row's Description.",
-            width="medium",
-            required=False,
-        ),
+        "rule_keyword": None,
+        "_row_id": None,
     }
     if include_account_col:
         cfg["account_id"] = None
