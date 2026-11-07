@@ -88,59 +88,128 @@ def process_api_transaction_sync(account_id, table_id, category_data, lookback_d
     )
     return new_transactions, warning, latest_bq_date, df
 
-def save_transactions_workflow(table_id, account_id, edited_df):
+def _build_row_id_map(df_with_tx_nums):
+    """Maps UI '_row_id' to the newly assigned BigQuery (account_id, transaction_number, credit, debit)."""
+    row_id_map = {}
+    if df_with_tx_nums is not None and "_row_id" in df_with_tx_nums.columns:
+        for _, r in df_with_tx_nums.iterrows():
+            rid = str(r.get("_row_id") or "").strip()
+            if rid:
+                row_id_map[rid] = {
+                    "account_id": str(r["account_id"]),
+                    "transaction_number": int(r["transaction_number"]),
+                    "credit": float(r.get("credit") or 0.0),
+                    "debit": float(r.get("debit") or 0.0),
+                }
+    return row_id_map
+
+
+def _apply_staged_reimbursements_after_insert(table_id, row_id_map, staged_reimb_links):
+    """
+    Executes staged reimbursement links in BigQuery after newly imported rows have been
+    assigned their transaction_number and inserted into table_id.
+    Supports linking batch credits (and/or existing BQ credits) to either an existing BQ expense
+    or a newly imported batch expense.
+    """
+    if not staged_reimb_links:
+        return 0
+
+    linked_groups = 0
+    for link in staged_reimb_links:
+        resolved_credits = []
+        for c in link.get("credits", []):
+            if c.get("source") == "batch":
+                rid = str(c.get("_row_id") or "")
+                if rid in row_id_map:
+                    resolved_credits.append({
+                        "account_id": row_id_map[rid]["account_id"],
+                        "transaction_number": row_id_map[rid]["transaction_number"],
+                        "credit": row_id_map[rid]["credit"],
+                    })
+            else:
+                resolved_credits.append({
+                    "account_id": str(c["account_id"]),
+                    "transaction_number": int(c["transaction_number"]),
+                    "credit": float(c["credit"]),
+                })
+
+        exp = link.get("expense") or {}
+        resolved_expense = None
+        if exp.get("source") == "batch":
+            erid = str(exp.get("_row_id") or "")
+            if erid in row_id_map:
+                resolved_expense = {
+                    "account_id": row_id_map[erid]["account_id"],
+                    "transaction_number": row_id_map[erid]["transaction_number"],
+                }
+        elif exp.get("account_id") and exp.get("transaction_number") is not None:
+            resolved_expense = {
+                "account_id": str(exp["account_id"]),
+                "transaction_number": int(exp["transaction_number"]),
+            }
+
+        if resolved_credits and resolved_expense:
+            ok = db_client.link_reimbursement_struct_array(table_id, resolved_credits, resolved_expense)
+            if ok:
+                linked_groups += 1
+
+    return linked_groups
+
+
+def save_transactions_workflow(table_id, account_id, edited_df, staged_reimb_links=None):
     """
     Facade 2: Handles the WRITE workflow.
-    Takes the dataframe from the UI, enriches it, saves to BQ, updates net worth and
-    updates the account's closing balance.
+    Takes the dataframe from the UI, enriches it, saves to BQ, applies any staged reimbursement links,
+    updates net worth and updates the account's closing balance.
     """
-    # TODO: Move logic to domain layer
-    # TODO: Consider using repository pattern for DB interactions
-
     account_data = local_storage.load_json_data(config.ACCOUNTS_PATH)
 
     # Auto-save any checked inline categorization rules before stripping UI rule columns
     checked_rules, _ = categorization_logic.extract_checked_rules_from_df(edited_df)
     if checked_rules:
         rules_service.add_rules_batch(checked_rules)
-    edited_df = categorization_logic.strip_rule_columns(edited_df.copy())
+    work_df = edited_df.copy()
 
     # Ensure date column is datetime.date
-    edited_df["date"] = pd.to_datetime(edited_df["date"]).dt.date
+    work_df["date"] = pd.to_datetime(work_df["date"]).dt.date
     
     # Add derived fields expected in BQ table
-    edited_df["account_id"] = account_id
-    edited_df["account"] = account_logic.get_account_name(account_data, account_id)
-    edited_df["year"] = pd.to_datetime(edited_df["date"]).dt.year
-    edited_df["month"] = pd.to_datetime(edited_df["date"]).dt.to_period("M").astype(str)
-    edited_df["transaction_type"] = edited_df.apply(transaction_logic.classify_transaction, axis=1)
+    work_df["account_id"] = account_id
+    work_df["account"] = account_logic.get_account_name(account_data, account_id)
+    work_df["year"] = pd.to_datetime(work_df["date"]).dt.year
+    work_df["month"] = pd.to_datetime(work_df["date"]).dt.to_period("M").astype(str)
+    work_df["transaction_type"] = work_df.apply(transaction_logic.classify_transaction, axis=1)
 
     # Ensure transactions are sorted chronologically while preserving same-day order
-    edited_df = edited_df.sort_values(by="date", ascending=True, kind="stable").reset_index(drop=True)
+    work_df = work_df.sort_values(by="date", ascending=True, kind="stable").reset_index(drop=True)
 
     # Get current max transaction_number for the account
     start_num = db_client.get_max_transaction_number(table_id, account_id)
     
     # Assign new transaction numbers sequentially
-    edited_df["transaction_number"] = range(start_num + 1, start_num + 1 + len(edited_df))
+    work_df["transaction_number"] = range(start_num + 1, start_num + 1 + len(work_df))
 
     # Create a unique transaction_id for each transaction
-    edited_df["transaction_id"] = (
-        edited_df["account_id"] + ":" + edited_df["transaction_number"].astype(str)
+    work_df["transaction_id"] = (
+        work_df["account_id"] + ":" + work_df["transaction_number"].astype(str)
     )
 
+    row_id_map = _build_row_id_map(work_df)
+    clean_df = categorization_logic.strip_rule_columns(work_df)
+
     # Determine closing balance from the last row
-    # Filter out 'Info' rows to find valid financial transactions
-    valid_rows = edited_df[edited_df["transaction_type"] != "Info"]
-    
+    valid_rows = clean_df[clean_df["transaction_type"] != "Info"]
     if not valid_rows.empty:
         closing_balance = float(valid_rows.iloc[-1]["balance"])
     else:
         closing_balance = None
 
     # Load into BigQuery
-    # TODO: Handle potential errors here
-    db_client.insert_transactions(table_id, edited_df)   
+    db_client.insert_transactions(table_id, clean_df)
+
+    # Apply any staged reimbursement links now that transaction_numbers exist in BigQuery
+    if staged_reimb_links:
+        _apply_staged_reimbursements_after_insert(table_id, row_id_map, staged_reimb_links)
 
     # Update the net worth table
     update_success, error_msg = db_client.update_net_worth_table() 
@@ -152,7 +221,7 @@ def save_transactions_workflow(table_id, account_id, edited_df):
         if not balance_update_success:
             print(f"Warning: Transactions saved, but account balance update failed for {account_id}")
 
-    return len(edited_df), update_success, error_msg
+    return len(clean_df), update_success, error_msg
 
 
 def get_reconciliation_context(account_id, table_id):
@@ -286,11 +355,11 @@ def process_multi_account_api_sync(
     return results
 
 
-def save_multi_account_transactions_workflow(table_id, combined_edited_df):
+def save_multi_account_transactions_workflow(table_id, combined_edited_df, staged_reimb_links=None):
     """
     Saves a unified multi-account DataFrame of new transactions in a single BigQuery batch load,
-    assigning sequential transaction_numbers per account, updating each account's local balance,
-    and running the net worth refresh stored procedure once.
+    assigning sequential transaction_numbers per account, applying any staged reimbursement links,
+    updating each account's local balance, and running the net worth refresh stored procedure once.
     Returns (total_rows_saved, num_accounts_saved, update_success, error_msg).
     """
     if combined_edited_df is None or combined_edited_df.empty:
@@ -300,7 +369,7 @@ def save_multi_account_transactions_workflow(table_id, combined_edited_df):
     checked_rules, _ = categorization_logic.extract_checked_rules_from_df(combined_edited_df)
     if checked_rules:
         rules_service.add_rules_batch(checked_rules)
-    work_df = categorization_logic.strip_rule_columns(combined_edited_df.copy())
+    work_df = combined_edited_df.copy()
 
     account_data = local_storage.load_json_data(config.ACCOUNTS_PATH)
     enriched_batches = []
@@ -334,10 +403,16 @@ def save_multi_account_transactions_workflow(table_id, combined_edited_df):
     if not enriched_batches:
         return 0, 0, True, None
 
-    final_df = pd.concat(enriched_batches, ignore_index=True)
+    final_df_with_ids = pd.concat(enriched_batches, ignore_index=True)
+    row_id_map = _build_row_id_map(final_df_with_ids)
+    final_df = categorization_logic.strip_rule_columns(final_df_with_ids)
 
     # Insert all accounts' new transactions in a single BigQuery load job
     db_client.insert_transactions(table_id, final_df)
+
+    # Apply any staged reimbursement links now that transaction_numbers exist in BigQuery
+    if staged_reimb_links:
+        _apply_staged_reimbursements_after_insert(table_id, row_id_map, staged_reimb_links)
 
     # Refresh the net worth table once
     update_success, error_msg = db_client.update_net_worth_table()

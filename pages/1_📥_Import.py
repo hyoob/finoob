@@ -4,29 +4,36 @@ import pandas as pd
 import streamlit as st
 import config
 import ui
-from backend.domain import account_logic, categorization_logic, transaction_logic
+from backend.domain import account_logic, categorization_logic, reimbursement_logic, transaction_logic
 from backend.infrastructure import enable_banking_client, queries
-from backend.services import accounts_service, app_service, ingestion_service, rules_service
+from backend.services import (
+    accounts_service,
+    app_service,
+    ingestion_service,
+    reimbursement_service,
+    rules_service,
+)
 
-# Ensure updated backend modules are reloaded in an already-running Streamlit server
-importlib.reload(queries)
-importlib.reload(account_logic)
-importlib.reload(transaction_logic)
-importlib.reload(categorization_logic)
-importlib.reload(enable_banking_client)
-importlib.reload(rules_service)
-importlib.reload(accounts_service)
-importlib.reload(ingestion_service)
-importlib.reload(ui)
+# Reload backend modules once per session if code was updated while Streamlit was running
+if "_import_modules_reloaded_v3" not in st.session_state:
+    importlib.reload(queries)
+    importlib.reload(account_logic)
+    importlib.reload(transaction_logic)
+    importlib.reload(categorization_logic)
+    importlib.reload(reimbursement_logic)
+    importlib.reload(enable_banking_client)
+    importlib.reload(rules_service)
+    importlib.reload(reimbursement_service)
+    importlib.reload(accounts_service)
+    importlib.reload(ingestion_service)
+    importlib.reload(ui)
+    st.session_state["_import_modules_reloaded_v3"] = True
 
 # This sets the title, layout
 ui.init_page("Import")
 
 # loads all data variables
 categories, category_options, account_map, table_id = app_service.load_global_context()
-
-if "pending_rule_toast" in st.session_state:
-    st.toast(st.session_state.pop("pending_rule_toast"), icon="⚡")
 
 hdr_col1, hdr_col2 = st.columns([3, 1])
 hdr_col1.header("📥 Import New Transactions")
@@ -47,14 +54,150 @@ if config.ENV == "dev":
         st.rerun()
 
 
-def _format_rule_toolbar_caption(df_snapshot):
+def _format_rule_toolbar_caption(df_snapshot, staged_links=None):
     uncat_mask = categorization_logic.get_uncategorized_mask(df_snapshot)
     total_cnt = len(df_snapshot)
     uncat_cnt = int(uncat_mask.sum())
     cat_cnt = total_cnt - uncat_cnt
+
+    staged_credit_rids = set()
+    for link in (staged_links or []):
+        for c in link.get("credits", []):
+            if c.get("source") == "batch" and c.get("_row_id"):
+                staged_credit_rids.add(str(c["_row_id"]))
+
+    reimb_rows = df_snapshot[df_snapshot["category"].astype(str).str.strip() == "Reimbursement"]
+    reimb_rids = set(reimb_rows["_row_id"].astype(str).tolist()) if "_row_id" in reimb_rows.columns else set()
+    all_reimb_rids = reimb_rids.union(staged_credit_rids)
+    linked_cnt = len(all_reimb_rids.intersection(staged_credit_rids))
+    unlinked_cnt = len(all_reimb_rids - staged_credit_rids)
+
+    reimb_part = ""
+    if all_reimb_rids:
+        reimb_part = f"  •  💰 **Reimbursements:** `{linked_cnt}` linked, `{unlinked_cnt}` unlinked"
+
     return (
-        f"🏷️ **{cat_cnt}/{total_cnt} categorized** (`{uncat_cnt}` uncategorized) — "
-        "💡 *Tick **➕ Rule** on any row in the table to open the rule & category creator.*"
+        f"🏷️ **{cat_cnt}/{total_cnt} categorized** (`{uncat_cnt}` uncategorized){reimb_part} — "
+        "💡 *Tick **➕ Rule** to create a rule/category, or **🔗 Reimb** on a credit row to link reimbursement(s).*"
+    )
+
+
+def _inject_draggable_resizable_dialog():
+    """
+    Makes the active Streamlit @st.dialog non-blocking (transparent backdrop),
+    draggable by its header bar, and horizontally resizable by dragging its left or right edge.
+    """
+    st.markdown(
+        """
+        <style>
+        div[data-testid="stDialog"] {
+            background: transparent !important;
+            backdrop-filter: none !important;
+            pointer-events: none !important;
+        }
+        div[data-testid="stDialog"] > div {
+            background: transparent !important;
+            pointer-events: none !important;
+            justify-content: flex-end !important;
+            padding-right: 2.0rem !important;
+        }
+        div[data-testid="stDialog"] div[role="dialog"] {
+            pointer-events: auto !important;
+            position: relative !important;
+            max-width: 96vw !important;
+            min-width: 420px !important;
+            box-shadow: 0 14px 44px rgba(0, 0, 0, 0.45) !important;
+            border: 1px solid rgba(128, 128, 128, 0.4) !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.components.v1.html(
+        r"""
+        <script>
+        (function() {
+            const doc = window.parent.document;
+            const dlg = doc.querySelector('div[data-testid="stDialog"] div[role="dialog"]');
+            if (!dlg || dlg.dataset.draggableAttached === "true") return;
+            dlg.dataset.draggableAttached = "true";
+
+            function getTranslate() {
+                const transform = dlg.style.transform || "";
+                const match = transform.match(/translate\(([-\d.]+)px,\s*([-\d.]+)px\)/);
+                return match ? [parseFloat(match[1]), parseFloat(match[2])] : [0, 0];
+            }
+
+            // 1. Header dragging (move window)
+            const header = dlg.firstElementChild;
+            let isDragging = false, startX = 0, startY = 0, origX = 0, origY = 0;
+            if (header) {
+                header.style.cursor = "move";
+                header.style.userSelect = "none";
+                header.title = "Drag to move this window";
+                header.addEventListener("mousedown", function(e) {
+                    if (e.target.tagName === "BUTTON" || e.target.closest("button")) return;
+                    isDragging = true;
+                    [origX, origY] = getTranslate();
+                    startX = e.clientX;
+                    startY = e.clientY;
+                    e.preventDefault();
+                });
+            }
+
+            // 2. Left & Right edge resize handles (drag edge to widen/narrow)
+            let isResizing = false, resizeSide = null, startW = 0, rStartX = 0, rOrigX = 0, rOrigY = 0;
+            ["left", "right"].forEach(function(side) {
+                const grip = doc.createElement("div");
+                grip.style.position = "absolute";
+                grip.style.top = "0";
+                grip.style.bottom = "0";
+                grip.style[side] = "-5px";
+                grip.style.width = "12px";
+                grip.style.cursor = "ew-resize";
+                grip.style.zIndex = "9999";
+                grip.title = "Drag edge to resize width";
+                grip.addEventListener("mousedown", function(e) {
+                    isResizing = true;
+                    resizeSide = side;
+                    startW = dlg.getBoundingClientRect().width;
+                    rStartX = e.clientX;
+                    [rOrigX, rOrigY] = getTranslate();
+                    e.preventDefault();
+                    e.stopPropagation();
+                });
+                dlg.appendChild(grip);
+            });
+
+            doc.addEventListener("mousemove", function(e) {
+                if (isDragging) {
+                    const dx = e.clientX - startX;
+                    const dy = e.clientY - startY;
+                    dlg.style.transform = `translate(${origX + dx}px, ${origY + dy}px)`;
+                } else if (isResizing) {
+                    const dx = e.clientX - rStartX;
+                    const maxW = window.parent.innerWidth * 0.96;
+                    if (resizeSide === "left") {
+                        const newW = Math.min(maxW, Math.max(420, startW - dx));
+                        dlg.style.width = `${newW}px`;
+                    } else if (resizeSide === "right") {
+                        const newW = Math.min(maxW, Math.max(420, startW + dx));
+                        const actualDelta = newW - startW;
+                        dlg.style.width = `${newW}px`;
+                        dlg.style.transform = `translate(${rOrigX + actualDelta}px, ${rOrigY}px)`;
+                    }
+                }
+            });
+
+            doc.addEventListener("mouseup", function() {
+                isDragging = false;
+                isResizing = false;
+                resizeSide = null;
+            });
+        })();
+        </script>
+        """,
+        height=0,
     )
 
 
@@ -84,70 +227,9 @@ def _open_rule_dialog_on_tick(full_df, key_prefix, on_apply_rules, on_sync_row_e
     init_lbl = str(row.get("label") or "").strip()
     amt = max(float(row.get("debit") or 0.0), float(row.get("credit") or 0.0))
 
-    @st.dialog("⚡ Add Categorization Rule (Drag header to move)")
+    @st.dialog("⚡ Add Categorization Rule (Drag header to move, edges to resize)")
     def _rule_modal():
-        st.markdown(
-            """
-            <style>
-            div[data-testid="stDialog"] {
-                background: transparent !important;
-                backdrop-filter: none !important;
-                pointer-events: none !important;
-            }
-            div[data-testid="stDialog"] > div {
-                background: transparent !important;
-                pointer-events: none !important;
-                justify-content: flex-end !important;
-                padding-right: 2.5rem !important;
-            }
-            div[data-testid="stDialog"] div[role="dialog"] {
-                pointer-events: auto !important;
-                box-shadow: 0 14px 44px rgba(0, 0, 0, 0.45) !important;
-                border: 1px solid rgba(128, 128, 128, 0.4) !important;
-            }
-            </style>
-            """,
-            unsafe_allow_html=True,
-        )
-        st.components.v1.html(
-            r"""
-            <script>
-            (function() {
-                const doc = window.parent.document;
-                const dlg = doc.querySelector('div[data-testid="stDialog"] div[role="dialog"]');
-                if (!dlg || dlg.dataset.draggableAttached === "true") return;
-                dlg.dataset.draggableAttached = "true";
-                const header = dlg.firstElementChild;
-                if (!header) return;
-                header.style.cursor = "move";
-                header.style.userSelect = "none";
-                header.title = "Drag to move this window";
-                let isDragging = false, startX = 0, startY = 0, origX = 0, origY = 0;
-                header.addEventListener("mousedown", function(e) {
-                    if (e.target.tagName === "BUTTON" || e.target.closest("button")) return;
-                    isDragging = true;
-                    const transform = dlg.style.transform || "";
-                    const match = transform.match(/translate\(([-\d.]+)px,\s*([-\d.]+)px\)/);
-                    origX = match ? parseFloat(match[1]) : 0;
-                    origY = match ? parseFloat(match[2]) : 0;
-                    startX = e.clientX;
-                    startY = e.clientY;
-                    e.preventDefault();
-                });
-                doc.addEventListener("mousemove", function(e) {
-                    if (!isDragging) return;
-                    const dx = e.clientX - startX;
-                    const dy = e.clientY - startY;
-                    dlg.style.transform = `translate(${origX + dx}px, ${origY + dy}px)`;
-                });
-                doc.addEventListener("mouseup", function() {
-                    isDragging = false;
-                });
-            })();
-            </script>
-            """,
-            height=0,
-        )
+        _inject_draggable_resizable_dialog()
         live_cats = rules_service.get_all_categories()
         live_cat_options = sorted(list(live_cats.keys()))
 
@@ -273,7 +355,7 @@ def _open_rule_dialog_on_tick(full_df, key_prefix, on_apply_rules, on_sync_row_e
     _rule_modal()
 
 
-def _render_rule_toolbar(df_snapshot, key_prefix, on_apply_rules, on_toggle_uncat=None):
+def _render_rule_toolbar(df_snapshot, key_prefix, on_apply_rules, on_toggle_uncat=None, staged_links=None):
     """
     Renders the categorization progress counter and the '🎯 Show only uncategorized' toggle
     above the transactions editor. Returns (show_only_uncat, caption_slot).
@@ -283,7 +365,7 @@ def _render_rule_toolbar(df_snapshot, key_prefix, on_apply_rules, on_toggle_unca
 
     tb_col1, tb_col2 = st.columns([3.0, 1.0])
     caption_slot = tb_col1.empty()
-    caption_slot.caption(_format_rule_toolbar_caption(df_snapshot))
+    caption_slot.caption(_format_rule_toolbar_caption(df_snapshot, staged_links=staged_links))
 
     show_only_uncat = tb_col2.toggle(
         "🎯 Show only uncategorized",
@@ -294,6 +376,337 @@ def _render_rule_toolbar(df_snapshot, key_prefix, on_apply_rules, on_toggle_unca
     )
 
     return show_only_uncat, caption_slot
+
+
+def _render_staged_reimbursements_summary(staged_links_key):
+    """Renders a compact summary of staged reimbursement links with an Undo button for each."""
+    staged_links = st.session_state.get(staged_links_key, [])
+    if not staged_links:
+        return
+
+    st.markdown("##### 💰 Staged Reimbursement Links (will be applied on Save to BigQuery)")
+    for idx, link in enumerate(list(staged_links)):
+        credits = link.get("credits", [])
+        exp = link.get("expense", {})
+        total_reimb = sum(float(c.get("credit") or 0.0) for c in credits)
+        c_desc = (
+            f"{credits[0].get('description', '')} (€{total_reimb:.2f})"
+            if len(credits) == 1
+            else f"{len(credits)} credits totaling €{total_reimb:.2f}"
+        )
+        e_desc = exp.get("description", "Expense")
+        cur_net = float(exp.get("current_net_before", exp.get("debit", 0.0)))
+        final_net = round(cur_net - total_reimb, 2)
+
+        sc1, sc2 = st.columns([5.5, 0.8])
+        sc1.info(
+            f"🔗 **{c_desc}** → **{e_desc}** (`{exp.get('date', '')}`, {exp.get('source_label', '')})  •  "
+            f"Net Cost: `€{cur_net:.2f}` → **`€{final_net:.2f}`**"
+        )
+        if sc2.button("🗑️ Undo", key=f"{staged_links_key}_undo_{idx}", use_container_width=True):
+            st.session_state[staged_links_key].pop(idx)
+            st.rerun()
+
+
+def _open_reimb_dialog_on_tick(
+    full_df,
+    key_prefix,
+    staged_links_key,
+    on_stage_reimb,
+    on_cancel_reimb,
+    default_account_id=None,
+):
+    """
+    Detects when a user ticks '🔗 Reimb' (link_reimb) on a row in the transactions table
+    and opens a non-blocking, draggable modal dialog to link 1 or more reimbursement credits
+    to an original expense (from either the current import batch or saved BigQuery transactions).
+    """
+    if full_df is None or full_df.empty or "link_reimb" not in full_df.columns:
+        return
+
+    prev_key = f"{key_prefix}_prev_reimb_ticked_ids"
+    prev_ticked = st.session_state.get(prev_key, set())
+    cur_ticked_rows = full_df[full_df["link_reimb"] == True]
+    cur_ticked_ids = set(cur_ticked_rows["_row_id"].astype(str).tolist())
+    newly_ticked_ids = [rid for rid in cur_ticked_rows["_row_id"].astype(str).tolist() if rid not in prev_ticked]
+    st.session_state[prev_key] = cur_ticked_ids
+
+    if not newly_ticked_ids:
+        return
+
+    target_rid = newly_ticked_ids[0]
+    if staged_links_key not in st.session_state:
+        st.session_state[staged_links_key] = []
+
+    already_staged_credit_rids = set()
+    staged_reduction_by_exp_key = {}
+    for link in st.session_state[staged_links_key]:
+        link_sum = sum(float(c.get("credit") or 0.0) for c in link.get("credits", []))
+        for c in link.get("credits", []):
+            if c.get("source") == "batch" and c.get("_row_id"):
+                already_staged_credit_rids.add(str(c["_row_id"]))
+        exp = link.get("expense", {})
+        ekey = (
+            f"batch:{exp.get('_row_id')}"
+            if exp.get("source") == "batch"
+            else f"bq:{exp.get('account_id')}:{exp.get('transaction_number')}"
+        )
+        staged_reduction_by_exp_key[ekey] = staged_reduction_by_exp_key.get(ekey, 0.0) + link_sum
+
+    @st.dialog("💰 Link Reimbursement(s) to Expense (Drag header to move, edges to resize)", width="large")
+    def _reimb_modal():
+        _inject_draggable_resizable_dialog()
+
+        # --- 1. Build candidate credit rows from current batch ---
+        credit_candidates = []
+        for _, r in full_df.iterrows():
+            rid = str(r.get("_row_id") or "")
+            cred_val = float(r.get("credit") or 0.0)
+            if cred_val > 0 and rid not in already_staged_credit_rids:
+                acc_id_row = str(r.get("account_id") or default_account_id or "")
+                acc_name_row = str(r.get("account") or account_map.get(acc_id_row, acc_id_row))
+                credit_candidates.append({
+                    "include": (rid == target_rid),
+                    "_row_id": rid,
+                    "account_id": acc_id_row,
+                    "account": acc_name_row,
+                    "date": str(pd.to_datetime(r["date"]).date()) if pd.notna(r.get("date")) else "",
+                    "description": str(r.get("description") or "").strip(),
+                    "credit": round(cred_val, 2),
+                    "category": str(r.get("category") or "").strip(),
+                    "label": str(r.get("label") or "").strip(),
+                })
+
+        if not credit_candidates:
+            st.warning("⚠️ No unlinked credit (`credit > 0`) rows available in this import batch.")
+            if st.button("Close", key=f"{key_prefix}_reimb_empty_close_{target_rid}"):
+                st.session_state[prev_key] = set()
+                on_cancel_reimb()
+                st.rerun()
+            return
+
+        # Put the ticked credit row first so it's immediately visible at the top
+        credit_candidates.sort(key=lambda x: (not x["include"], x["date"]))
+        credits_df = pd.DataFrame(credit_candidates)
+
+        st.markdown("##### 1. Select Reimbursement Credit(s) from Batch")
+        st.caption(
+            "Tick one or more incoming credit transactions to link to the same expense (they will automatically be categorized as `Reimbursement`)."
+        )
+        edited_credits_df = st.data_editor(
+            credits_df,
+            use_container_width=True,
+            hide_index=True,
+            num_rows="fixed",
+            disabled=["account", "date", "description", "credit", "category"],
+            column_order=["include", "date", "account", "description", "credit", "category"],
+            column_config={
+                "include": st.column_config.CheckboxColumn("Link", width="small"),
+                "date": st.column_config.TextColumn("Date", width="small"),
+                "account": st.column_config.TextColumn("Account", width="small"),
+                "description": st.column_config.TextColumn("Description", width="large"),
+                "credit": st.column_config.NumberColumn("Credit (€)", format="%.2f €", width="small"),
+                "category": st.column_config.TextColumn("Current Category", width="small"),
+            },
+            key=f"{key_prefix}_reimb_credits_editor_{target_rid}",
+        )
+        selected_credits = edited_credits_df[edited_credits_df["include"] == True].copy()
+
+        # --- 2. Build candidate expense rows (Current Batch + Saved in BigQuery) ---
+        st.markdown("##### 2. Select Original Expense")
+        fc1, fc2 = st.columns([1.2, 1.8])
+        acc_filter_options = ["ALL"] + list(account_map.keys())
+        selected_exp_acc = fc1.selectbox(
+            "Account (Expense):",
+            options=acc_filter_options,
+            format_func=lambda k: "All Accounts" if k == "ALL" else account_map.get(k, k),
+            key=f"{key_prefix}_reimb_exp_acc_{target_rid}",
+        )
+        search_exp = fc2.text_input(
+            "🔍 Search Description / Label:",
+            placeholder="Type merchant, label, or amount...",
+            key=f"{key_prefix}_reimb_exp_search_{target_rid}",
+        )
+
+        bq_cache_key = f"bq_expenses_cache_{table_id}"
+        if bq_cache_key not in st.session_state:
+            st.session_state[bq_cache_key] = reimbursement_service.fetch_recent_expenses_all_accounts(
+                table_id, limit=600
+            )
+        bq_expenses_df = st.session_state[bq_cache_key]
+
+        expense_rows = []
+        # A. Expenses in the current import batch
+        for _, r in full_df.iterrows():
+            deb_val = float(r.get("debit") or 0.0)
+            if deb_val > 0:
+                erid = str(r.get("_row_id") or "")
+                e_acc_id = str(r.get("account_id") or default_account_id or "")
+                if selected_exp_acc != "ALL" and e_acc_id != selected_exp_acc:
+                    continue
+                ekey = f"batch:{erid}"
+                prior_staged = staged_reduction_by_exp_key.get(ekey, 0.0)
+                net_deb = round(deb_val - prior_staged, 2)
+                if net_deb <= 0:
+                    continue
+                e_acc_name = str(r.get("account") or account_map.get(e_acc_id, e_acc_id))
+                expense_rows.append({
+                    "_exp_key": ekey,
+                    "source": "batch",
+                    "_row_id": erid,
+                    "transaction_number": None,
+                    "account_id": e_acc_id,
+                    "source_label": f"📥 In Batch ({e_acc_name})",
+                    "date": str(pd.to_datetime(r["date"]).date()) if pd.notna(r.get("date")) else "",
+                    "description": str(r.get("description") or "").strip(),
+                    "label": str(r.get("label") or "").strip(),
+                    "category": str(r.get("category") or "").strip(),
+                    "debit": net_deb,
+                    "reimbursement": None,
+                })
+
+        # B. Expenses already saved in BigQuery
+        if bq_expenses_df is not None and not bq_expenses_df.empty:
+            for _, r in bq_expenses_df.iterrows():
+                e_acc_id = str(r.get("account_id") or "")
+                if selected_exp_acc != "ALL" and e_acc_id != selected_exp_acc:
+                    continue
+                tx_num = int(r["transaction_number"])
+                ekey = f"bq:{e_acc_id}:{tx_num}"
+                prior_staged = staged_reduction_by_exp_key.get(ekey, 0.0)
+                net_deb = round(float(r.get("debit") or 0.0) - prior_staged, 2)
+                if net_deb <= 0:
+                    continue
+                e_acc_name = str(r.get("account") or account_map.get(e_acc_id, e_acc_id))
+                expense_rows.append({
+                    "_exp_key": ekey,
+                    "source": "bq",
+                    "_row_id": None,
+                    "transaction_number": tx_num,
+                    "account_id": e_acc_id,
+                    "source_label": f"🗄️ Saved ({e_acc_name})",
+                    "date": str(pd.to_datetime(r["date"]).date()) if pd.notna(r.get("date")) else "",
+                    "description": str(r.get("description") or "").strip(),
+                    "label": str(r.get("label") or "").strip(),
+                    "category": str(r.get("category") or "").strip(),
+                    "debit": net_deb,
+                    "reimbursement": r.get("reimbursement"),
+                })
+
+        exp_df = pd.DataFrame(expense_rows)
+        if not exp_df.empty and search_exp.strip():
+            q = search_exp.strip()
+            mask = (
+                exp_df["description"].str.contains(q, case=False, na=False)
+                | exp_df["label"].str.contains(q, case=False, na=False)
+                | exp_df["category"].str.contains(q, case=False, na=False)
+                | exp_df["debit"].astype(str).str.contains(q, case=False, na=False)
+            )
+            exp_df = exp_df[mask].reset_index(drop=True)
+
+        if exp_df.empty:
+            st.info("No matching expenses found.")
+            selected_exp_indices = []
+        else:
+            exp_grid_key = f"{key_prefix}_reimb_exp_grid_{target_rid}_{selected_exp_acc}_{search_exp}"
+            st.dataframe(
+                exp_df[["date", "source_label", "description", "debit", "category", "label"]],
+                column_config={
+                    "date": st.column_config.TextColumn("Date", width="small"),
+                    "source_label": st.column_config.TextColumn("Source / Account", width="medium"),
+                    "description": st.column_config.TextColumn("Description", width="large"),
+                    "debit": st.column_config.NumberColumn("Current Net Debit", format="%.2f €", width="small"),
+                    "category": st.column_config.TextColumn("Category", width="small"),
+                    "label": st.column_config.TextColumn("Label", width="small"),
+                },
+                use_container_width=True,
+                hide_index=True,
+                selection_mode="single-row",
+                on_select="rerun",
+                key=exp_grid_key,
+            )
+            selected_exp_indices = (
+                st.session_state.get(exp_grid_key, {}).get("selection", {}).get("rows", [])
+            )
+
+        # --- 3. Impact Preview & Action Buttons ---
+        can_confirm = (not selected_credits.empty) and (len(selected_exp_indices) > 0)
+        if can_confirm:
+            chosen_exp = exp_df.iloc[selected_exp_indices[0]]
+            stats = reimbursement_logic.calculate_reimbursement_impact(selected_credits, chosen_exp)
+            if stats["existing_count"] > 0:
+                st.info(
+                    f"ℹ️ This expense already has **{stats['existing_count']}** previous reimbursement(s) "
+                    f"totaling **€{stats['existing_sum']:.2f}**."
+                )
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Current Net Cost", f"€{stats['current_net']:.2f}")
+            reimb_lbl = (
+                f"New Reimbursements ({stats['new_count']})"
+                if stats["new_count"] > 1
+                else "New Reimbursement"
+            )
+            m2.metric(reimb_lbl, f"€{stats['new_amt']:.2f}")
+            m3.metric(
+                "Final Net Cost",
+                f"€{stats['final_net']:.2f}",
+                delta=f"-€{stats['new_amt']:.2f}",
+            )
+        else:
+            st.caption("👆 Check at least one credit row in **1.** and click one expense row in **2.** to preview and link.")
+
+        bc1, bc2 = st.columns([2, 1])
+        if bc1.button(
+            "✅ Stage Reimbursement Link",
+            type="primary",
+            disabled=not can_confirm,
+            use_container_width=True,
+            key=f"{key_prefix}_reimb_confirm_btn_{target_rid}",
+        ):
+            chosen_exp = exp_df.iloc[selected_exp_indices[0]]
+            staged_credits_list = []
+            for _, crow in selected_credits.iterrows():
+                staged_credits_list.append({
+                    "source": "batch",
+                    "_row_id": str(crow["_row_id"]),
+                    "account_id": str(crow["account_id"]),
+                    "credit": float(crow["credit"]),
+                    "description": str(crow["description"]),
+                    "date": str(crow["date"]),
+                })
+            staged_exp_dict = {
+                "source": str(chosen_exp["source"]),
+                "_row_id": chosen_exp["_row_id"],
+                "transaction_number": chosen_exp["transaction_number"],
+                "account_id": str(chosen_exp["account_id"]),
+                "debit": float(chosen_exp["debit"]),
+                "current_net_before": float(chosen_exp["debit"]),
+                "description": str(chosen_exp["description"]),
+                "date": str(chosen_exp["date"]),
+                "source_label": str(chosen_exp["source_label"]),
+            }
+            st.session_state[staged_links_key].append({
+                "credits": staged_credits_list,
+                "expense": staged_exp_dict,
+            })
+            st.session_state[prev_key] = set()
+            total_c = sum(c["credit"] for c in staged_credits_list)
+            st.session_state.pending_rule_toast = (
+                f"💰 Staged reimbursement (€{total_c:.2f}) → {staged_exp_dict['description'][:35]}"
+            )
+            on_stage_reimb([c["_row_id"] for c in staged_credits_list])
+            st.rerun()
+
+        if bc2.button(
+            "Cancel",
+            use_container_width=True,
+            key=f"{key_prefix}_reimb_cancel_btn_{target_rid}",
+        ):
+            st.session_state[prev_key] = set()
+            on_cancel_reimb()
+            st.rerun()
+
+    _reimb_modal()
 
 
 def _render_single_account_editor_and_save(new_transactions, warning, latest_bq_date, account_id, key_prefix):
@@ -338,6 +751,7 @@ def _render_single_account_editor_and_save(new_transactions, warning, latest_bq_
     rev_key = f"{key_prefix}_rev_{account_id}"
     latest_edit_key = f"{key_prefix}_latest_edit_{account_id}"
     pinned_uncat_key = f"{key_prefix}_pinned_uncat_{account_id}"
+    staged_reimb_key = f"{key_prefix}_staged_reimb_{account_id}"
     if buf_key not in st.session_state:
         st.session_state[buf_key] = categorization_logic.ensure_rule_columns(new_transactions.copy())
 
@@ -354,6 +768,7 @@ def _render_single_account_editor_and_save(new_transactions, warning, latest_bq_
         cur_df = st.session_state.get(latest_edit_key, st.session_state[buf_key]).copy()
         cur_df = categorization_logic.ensure_rule_columns(cur_df)
         cur_df["save_as_rule"] = False
+        cur_df["link_reimb"] = False
         cur_df["rule_keyword"] = ""
         matched = categorization_logic.recategorize_uncategorized_rows(cur_df, updated_cats)
         st.session_state[buf_key] = cur_df
@@ -366,6 +781,7 @@ def _render_single_account_editor_and_save(new_transactions, warning, latest_bq_
         key_prefix=f"{key_prefix}_{account_id}",
         on_apply_rules=_apply_single_rules,
         on_toggle_uncat=_commit_single_edits,
+        staged_links=st.session_state.get(staged_reimb_key, []),
     )
 
     column_cfg = ui.get_import_editor_config(category_options, include_account_col=False)
@@ -416,7 +832,9 @@ def _render_single_account_editor_and_save(new_transactions, warning, latest_bq_
 
     st.session_state[latest_edit_key] = edited_df
     if caption_slot is not None:
-        caption_slot.caption(_format_rule_toolbar_caption(edited_df))
+        caption_slot.caption(
+            _format_rule_toolbar_caption(edited_df, staged_links=st.session_state.get(staged_reimb_key, []))
+        )
 
     if show_only_uncat and newly_done_cnt > 0:
         if st.button(
@@ -441,6 +859,21 @@ def _render_single_account_editor_and_save(new_transactions, warning, latest_bq_
             cur = st.session_state.get(latest_edit_key, edited_df).copy()
             cur = categorization_logic.ensure_rule_columns(cur)
             cur["save_as_rule"] = False
+            cur["link_reimb"] = False
+            st.session_state[buf_key] = cur
+            st.session_state[rev_key] = st.session_state.get(rev_key, 0) + 1
+
+        def _stage_single_reimb(credit_rids):
+            cur = st.session_state.get(latest_edit_key, edited_df).copy()
+            cur = categorization_logic.ensure_rule_columns(cur)
+            rids_set = set(str(x) for x in credit_rids)
+            for idx in cur.index:
+                if str(cur.at[idx, "_row_id"]) in rids_set:
+                    cur.at[idx, "category"] = "Reimbursement"
+                    if not str(cur.at[idx, "label"] or "").strip():
+                        cur.at[idx, "label"] = "Reimbursement"
+            cur["link_reimb"] = False
+            st.session_state[latest_edit_key] = cur
             st.session_state[buf_key] = cur
             st.session_state[rev_key] = st.session_state.get(rev_key, 0) + 1
 
@@ -451,6 +884,15 @@ def _render_single_account_editor_and_save(new_transactions, warning, latest_bq_
             on_sync_row_edits=_sync_single_staged_rows,
             on_cancel_rule=_cancel_single_rule,
         )
+        _open_reimb_dialog_on_tick(
+            edited_df,
+            key_prefix=f"{key_prefix}_{account_id}_{cur_rev}",
+            staged_links_key=staged_reimb_key,
+            on_stage_reimb=_stage_single_reimb,
+            on_cancel_reimb=_cancel_single_rule,
+            default_account_id=account_id,
+        )
+        _render_staged_reimbursements_summary(staged_reimb_key)
         ctx_key = f"recon_ctx_{account_id}_{table_id}"
         if ctx_key not in st.session_state:
             st.session_state[ctx_key] = ingestion_service.get_reconciliation_context(account_id, table_id)
@@ -506,18 +948,29 @@ def _render_single_account_editor_and_save(new_transactions, warning, latest_bq_
             )
             can_save = override_approved
 
+        staged_single_links = st.session_state.get(staged_reimb_key, [])
+        reimb_btn_suffix = (
+            f" (& link {len(staged_single_links)} reimbursement group(s))"
+            if staged_single_links
+            else ""
+        )
         if st.button(
-            f"💾 Save {len(edited_df)} transactions to BigQuery",
+            f"💾 Save {len(edited_df)} transactions to BigQuery{reimb_btn_suffix}",
             type="primary",
             disabled=not can_save,
             key=f"{key_prefix}_save_btn",
         ):
             with st.spinner("Saving transactions to BigQuery..."):
                 count, update_success, error_msg = ingestion_service.save_transactions_workflow(
-                    table_id, account_id, edited_df
+                    table_id,
+                    account_id,
+                    edited_df,
+                    staged_reimb_links=staged_single_links,
                 )
             if update_success:
                 st.success(f"🎉 Successfully inserted {count} rows into `{table_id}`")
+                st.session_state.pop(staged_reimb_key, None)
+                st.session_state.pop(f"bq_expenses_cache_{table_id}", None)
                 if ctx_key in st.session_state:
                     del st.session_state[ctx_key]
                 st.cache_data.clear()
@@ -599,7 +1052,6 @@ if tab_sync is not None:
                     st.session_state.pop("multi_sync_latest_edit", None)
                     # Increment batch counter so scorecard checkboxes & editor reset cleanly on new fetch
                     st.session_state.multi_sync_run_id = st.session_state.get("multi_sync_run_id", 0) + 1
-                    st.rerun()
                 except Exception as e:
                     progress_slot.empty()
                     print(traceback.format_exc())
@@ -779,6 +1231,7 @@ if tab_sync is not None:
                         )
                         editor_rev = st.session_state.get("multi_sync_editor_rev", 0)
                         pinned_uncat_multi_key = f"multi_sync_pinned_uncat_{run_id}_{'_'.join(included_acc_ids)}"
+                        staged_reimb_multi_key = f"multi_sync_staged_reimb_{run_id}"
 
                         def _commit_multi_edits(reset_pinned_uncat=True):
                             if "multi_sync_latest_edit" in st.session_state:
@@ -804,6 +1257,7 @@ if tab_sync is not None:
                                 if not acc_slice.empty:
                                     acc_slice = categorization_logic.ensure_rule_columns(acc_slice)
                                     acc_slice["save_as_rule"] = False
+                                    acc_slice["link_reimb"] = False
                                     acc_slice["rule_keyword"] = ""
                                     total_matched += categorization_logic.recategorize_uncategorized_rows(
                                         acc_slice, updated_cats
@@ -820,6 +1274,7 @@ if tab_sync is not None:
                             key_prefix=f"multi_sync_{run_id}",
                             on_apply_rules=_apply_multi_rules,
                             on_toggle_uncat=_commit_multi_edits,
+                            staged_links=st.session_state.get(staged_reimb_multi_key, []),
                         )
 
                         col_cfg_multi = ui.get_import_editor_config(
@@ -874,7 +1329,12 @@ if tab_sync is not None:
 
                         st.session_state.multi_sync_latest_edit = edited_combined_df
                         if caption_slot is not None:
-                            caption_slot.caption(_format_rule_toolbar_caption(edited_combined_df))
+                            caption_slot.caption(
+                                _format_rule_toolbar_caption(
+                                    edited_combined_df,
+                                    staged_links=st.session_state.get(staged_reimb_multi_key, []),
+                                )
+                            )
 
                         if show_only_uncat and newly_done_cnt > 0:
                             if st.button(
@@ -899,6 +1359,20 @@ if tab_sync is not None:
                                 cur = st.session_state.get("multi_sync_latest_edit", edited_combined_df).copy()
                                 cur = categorization_logic.ensure_rule_columns(cur)
                                 cur["save_as_rule"] = False
+                                cur["link_reimb"] = False
+                                st.session_state.multi_sync_latest_edit = cur
+                                _commit_multi_edits(reset_pinned_uncat=False)
+
+                            def _stage_multi_reimb(credit_rids):
+                                cur = st.session_state.get("multi_sync_latest_edit", edited_combined_df).copy()
+                                cur = categorization_logic.ensure_rule_columns(cur)
+                                rids_set = set(str(x) for x in credit_rids)
+                                for idx in cur.index:
+                                    if str(cur.at[idx, "_row_id"]) in rids_set:
+                                        cur.at[idx, "category"] = "Reimbursement"
+                                        if not str(cur.at[idx, "label"] or "").strip():
+                                            cur.at[idx, "label"] = "Reimbursement"
+                                cur["link_reimb"] = False
                                 st.session_state.multi_sync_latest_edit = cur
                                 _commit_multi_edits(reset_pinned_uncat=False)
 
@@ -909,6 +1383,14 @@ if tab_sync is not None:
                                 on_sync_row_edits=_sync_multi_staged_rows,
                                 on_cancel_rule=_cancel_multi_rule,
                             )
+                            _open_reimb_dialog_on_tick(
+                                edited_combined_df,
+                                key_prefix=f"multi_sync_{run_id}_{editor_rev}",
+                                staged_links_key=staged_reimb_multi_key,
+                                on_stage_reimb=_stage_multi_reimb,
+                                on_cancel_reimb=_cancel_multi_rule,
+                            )
+                            _render_staged_reimbursements_summary(staged_reimb_multi_key)
 
                             # Live re-validation per included account in case amounts/rows were edited in the table
                             editor_issues = []
@@ -932,8 +1414,14 @@ if tab_sync is not None:
 
                             num_tx = len(edited_combined_df)
                             num_accs = len(included_acc_ids)
+                            staged_multi_links = st.session_state.get(staged_reimb_multi_key, [])
+                            reimb_multi_suffix = (
+                                f" (& link {len(staged_multi_links)} reimbursement group(s))"
+                                if staged_multi_links
+                                else ""
+                            )
                             if st.button(
-                                f"💾 Save {num_tx} transaction(s) across {num_accs} account(s) to BigQuery",
+                                f"💾 Save {num_tx} transaction(s) across {num_accs} account(s) to BigQuery{reimb_multi_suffix}",
                                 type="primary",
                                 key=f"multi_sync_save_btn_{run_id}",
                             ):
@@ -942,18 +1430,27 @@ if tab_sync is not None:
                                 ):
                                     saved_rows, saved_accs, update_success, error_msg = (
                                         ingestion_service.save_multi_account_transactions_workflow(
-                                            table_id, edited_combined_df
+                                            table_id,
+                                            edited_combined_df,
+                                            staged_reimb_links=staged_multi_links,
                                         )
                                     )
                                 if update_success:
+                                    st.session_state.pop(staged_reimb_multi_key, None)
+                                    st.session_state.pop(f"bq_expenses_cache_{table_id}", None)
                                     # Remove saved accounts from session state; keep any un-saved accounts if present
                                     for aid in included_acc_ids:
                                         st.session_state.multi_api_sync_result.pop(aid, None)
                                     if not st.session_state.multi_api_sync_result:
                                         del st.session_state.multi_api_sync_result
+                                    reimb_done_note = (
+                                        f", linked {len(staged_multi_links)} reimbursement group(s),"
+                                        if staged_multi_links
+                                        else ""
+                                    )
                                     st.session_state.multi_sync_saved_banner = (
                                         f"🎉 Successfully inserted {saved_rows} transaction(s) across "
-                                        f"{saved_accs} account(s) into `{table_id}` and refreshed Net Worth!"
+                                        f"{saved_accs} account(s) into `{table_id}`{reimb_done_note} and refreshed Net Worth!"
                                     )
                                     st.cache_data.clear()
                                     st.rerun()
@@ -1115,3 +1612,6 @@ if tab_conn is not None:
                         st.cache_data.clear()
                     else:
                         st.error("Failed to save mapping.")
+
+if "pending_rule_toast" in st.session_state:
+    st.toast(st.session_state.pop("pending_rule_toast"), icon="⚡")

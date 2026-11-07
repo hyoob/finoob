@@ -91,6 +91,14 @@ def get_all_expenses_query(table_id, account_id_all):
         LIMIT 1000
     """
 
+def get_recent_expenses_all_accounts_query(table_id, limit=600):
+    return f"""
+        SELECT * FROM `{table_id}`
+        WHERE debit > 0
+        ORDER BY date DESC, transaction_number DESC
+        LIMIT {int(limit)}
+    """
+
 def link_reimbursement_struct_array(table_id, e_composite_id, reimb_items, total_r_amt, e_id, e_acc):
     credit_where_clause = " OR ".join(
         f"(transaction_number = {item['r_id']} AND account_id = '{item['r_acc']}')"

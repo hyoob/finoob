@@ -2,7 +2,7 @@ import streamlit as st
 from backend.services import rules_service, accounts_service
 import config
 
-@st.cache_data
+@st.cache_data(show_spinner=False)
 def load_global_context():
     """
     Loads all static data needed to start the app.

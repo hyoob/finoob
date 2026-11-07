@@ -13,6 +13,12 @@ def fetch_expense_candidates(table_id, account_id):
     data = db_client.run_query(query)
     return pd.DataFrame(data) if data else None
 
+def fetch_recent_expenses_all_accounts(table_id, limit=600):
+    """Fetches recent expense (debit > 0) transactions across all accounts."""
+    query = queries.get_recent_expenses_all_accounts_query(table_id, limit=limit)
+    data = db_client.run_query(query)
+    return pd.DataFrame(data) if data else pd.DataFrame()
+
 def link_reimbursement_to_expense(table_id, reimb_rows, expense_row):
     """Facade for the write operation."""
     return db_client.link_reimbursement_struct_array(table_id, reimb_rows, expense_row)

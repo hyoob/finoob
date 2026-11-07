@@ -238,14 +238,18 @@ def ensure_rule_columns(df):
         df["rule_keyword"] = ""
     else:
         df["rule_keyword"] = df["rule_keyword"].fillna("").astype(str)
+    if "link_reimb" not in df.columns:
+        df["link_reimb"] = False
+    else:
+        df["link_reimb"] = df["link_reimb"].fillna(False).astype(bool)
     return df
 
 
 def strip_rule_columns(df):
-    """Drops UI-only rule-creation and row-tracking columns before saving transactions to BigQuery."""
+    """Drops UI-only rule-creation, reimbursement-link, and row-tracking columns before saving transactions to BigQuery."""
     if df is None:
         return df
-    return df.drop(columns=["save_as_rule", "rule_keyword", "_row_id"], errors="ignore")
+    return df.drop(columns=["save_as_rule", "rule_keyword", "link_reimb", "_row_id"], errors="ignore")
 
 
 def merge_edited_subset_into_master(master_df, shown_row_ids, edited_subset_df):

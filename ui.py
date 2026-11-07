@@ -124,6 +124,11 @@ def get_import_editor_config(category_options, include_account_col=False):
             help="Tick to stage a categorization rule for this row below the table (pre-filled with its Description).",
             width="small",
         ),
+        "link_reimb": st.column_config.CheckboxColumn(
+            "🔗 Reimb",
+            help="Tick on a credit row to link 1 or more reimbursements to an original expense.",
+            width="small",
+        ),
         "rule_keyword": None,
         "_row_id": None,
     }
