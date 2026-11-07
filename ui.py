@@ -15,13 +15,14 @@ def clear_session_state_data():
     if 'status_message' in st.session_state:
         st.session_state.status_message = None
 
-def pick_account(account_map, picker_message, key, on_change=None):
+def pick_account(account_map, picker_message, key, on_change=None, stop_if_empty=True):
     """
     Helper function to pick account from dropdown.
     Args:
         picker_message (str): Label for the dropdown.
         key (str): Unique ID for this widget (required when using multiple pickers).
         on_change (callable): Function to run ONLY when the selection changes.
+        stop_if_empty (bool): Whether to call st.stop() if no account is selected yet.
     """
     PLACEHOLDER_ID = "-- Select an account --"
     account_options = [PLACEHOLDER_ID] + list(account_map.keys())    
@@ -44,7 +45,9 @@ def pick_account(account_map, picker_message, key, on_change=None):
     # Prevent continuing unless user has selected a real account
     if account == "-- Select an account --":
         st.warning("⚠️ Please select an account to continue.")
-        st.stop()
+        if stop_if_empty:
+            st.stop()
+        return None
 
     return account
 
@@ -94,12 +97,12 @@ def get_categorization_editor_config(category_options):
         ),       
     }
 
-def get_import_editor_config(category_options):
+def get_import_editor_config(category_options, include_account_col=False):
     """
     Returns config for MODE 1: Import Transactions.
-    Shows Date/Label/Category.
+    Shows Date/Label/Category (and Account if include_account_col=True).
     """
-    return {
+    cfg = {
         "date": st.column_config.DateColumn(
             "date",
             format="YYYY-MM-DD"
@@ -115,8 +118,12 @@ def get_import_editor_config(category_options):
             width="medium",
             options=category_options,
             required=True,
-        )
+        ),
     }
+    if include_account_col:
+        cfg["account_id"] = None
+        cfg["account"] = st.column_config.TextColumn("Account", disabled=True, width="medium")
+    return cfg
 
 def init_page(page_title_suffix=None):
     """
@@ -178,6 +185,9 @@ def get_accounts_table_config():
             "Balance",
             width="small"
         ),
+        "last_updated": st.column_config.TextColumn("Last Updated", width="medium"),
+        "open_banking_status": st.column_config.TextColumn("Open Banking", width="small"),
+        "consent_expiry": st.column_config.TextColumn("Link Refresh Needed", width="medium"),
         "account_id": None  # Hide ID
     }
 

@@ -1,21 +1,25 @@
+from collections import Counter
 import pandas as pd
 
-def get_new_transactions(latest_bq_tx, df):
+
+def _get_effective_bq_debit(bq_tx):
+    reimb_info = bq_tx.get("reimbursement")
+    if (
+        isinstance(reimb_info, dict)
+        and reimb_info.get("has_reimbursement")
+        and bq_tx.get("original_debit") is not None
+    ):
+        return round(float(bq_tx["original_debit"]), 2)
+    return round(float(bq_tx.get("debit", 0) or 0.0), 2)
+
+
+def get_new_transactions(latest_bq_tx, df, recent_bq_txs=None):
     """
     Return new transactions from uploaded df that are after the latest_bq_tx.
     """
     # Define values for latest transaction in BigQuery
     bq_description = latest_bq_tx["description"]
-
-    # If the transaction has been reimbursed, BigQuery's 'debit' stores the net amount.
-    # We must match against 'original_debit' to correctly find the corresponding row in the CSV.
-    reimb_info = latest_bq_tx.get("reimbursement")
-    if (isinstance(reimb_info, dict) and 
-        reimb_info.get("has_reimbursement") and 
-        latest_bq_tx.get("original_debit") is not None):
-        bq_debit = float(latest_bq_tx["original_debit"])
-    else:
-        bq_debit = float(latest_bq_tx.get("debit", 0))
+    bq_debit = _get_effective_bq_debit(latest_bq_tx)
 
     bq_credit = float(latest_bq_tx.get("credit", 0))
     bq_balance = float(latest_bq_tx.get("balance") or 0.0) # default to 0.0 if None
@@ -58,6 +62,41 @@ def get_new_transactions(latest_bq_tx, df):
 
     if mask.any():
         marker_index = df[mask].index.max()  # last matching row
+
+        # If the source has no per-row running balance (e.g. Revolut API) and multiple
+        # transactions occurred on the same day in a different order than the prior CSV import,
+        # advance marker_index past any immediately following same-day rows already in BigQuery.
+        if "balance" not in df.columns and recent_bq_txs:
+            matched_date = df.loc[marker_index, "date"]
+            bq_same_day_counts = Counter()
+            for btx in recent_bq_txs:
+                if pd.to_datetime(btx.get("date")) == matched_date:
+                    key = (
+                        _get_effective_bq_debit(btx),
+                        round(float(btx.get("credit", 0) or 0.0), 2),
+                    )
+                    bq_same_day_counts[key] += 1
+
+            # Subtract same-day rows in df up to and including marker_index
+            same_day_df_up_to_marker = df.loc[:marker_index]
+            same_day_df_up_to_marker = same_day_df_up_to_marker[
+                same_day_df_up_to_marker["date"] == matched_date
+            ]
+            for _, srow in same_day_df_up_to_marker.iterrows():
+                key = (round(float(srow["debit"]), 2), round(float(srow["credit"]), 2))
+                if bq_same_day_counts[key] > 0:
+                    bq_same_day_counts[key] -= 1
+
+            # Advance marker_index if subsequent rows on matched_date are already accounted for in BQ
+            while (marker_index + 1) in df.index and df.loc[marker_index + 1, "date"] == matched_date:
+                next_row = df.loc[marker_index + 1]
+                key = (round(float(next_row["debit"]), 2), round(float(next_row["credit"]), 2))
+                if bq_same_day_counts[key] > 0:
+                    bq_same_day_counts[key] -= 1
+                    marker_index += 1
+                else:
+                    break
+
         new_transactions = df.loc[marker_index+1:].copy()
         # Keep only the required columns
 
@@ -209,7 +248,13 @@ def sort_transactions_chronologically(df, source_is_reverse_chronological):
     return df
 
 
-def validate_import_batch(df, latest_bq_tx=None, live_bank_balance=None, marker_warning=None):
+def validate_import_batch(
+    df,
+    latest_bq_tx=None,
+    live_bank_balance=None,
+    marker_warning=None,
+    pending_summary=None,
+):
     """
     Runs 4 data-integrity & balance-reconciliation checks on the candidate import batch:
       1. Marker Handshake: Was the last BigQuery transaction found in the CSV/API batch?
@@ -233,9 +278,18 @@ def validate_import_batch(df, latest_bq_tx=None, live_bank_balance=None, marker_
         bank_bal_amount = None
         bank_bal_type = None
 
+    pending_net = round(float((pending_summary or {}).get("net_change") or 0.0), 2)
+    pending_count = int((pending_summary or {}).get("count") or 0)
+    # If the bank only provides an intraday balance (ITAV/ITBD) that already includes pending holds,
+    # the implied booked balance is bank_bal_amount - pending_net
+    if bank_bal_amount is not None and bank_bal_type in ("ITAV", "ITBD") and pending_count > 0:
+        effective_bank_booked_bal = round(bank_bal_amount - pending_net, 2)
+    else:
+        effective_bank_booked_bal = bank_bal_amount
+
     if df is None or df.empty:
-        bank_ok = (abs(start_balance - bank_bal_amount) <= 0.01) if bank_bal_amount is not None else None
-        bank_diff = round(start_balance - bank_bal_amount, 2) if bank_bal_amount is not None else None
+        bank_ok = (abs(start_balance - effective_bank_booked_bal) <= 0.01) if effective_bank_booked_bal is not None else None
+        bank_diff = round(start_balance - effective_bank_booked_bal, 2) if effective_bank_booked_bal is not None else None
         empty_issues = []
         if marker_warning:
             empty_issues.append(marker_warning)
@@ -243,7 +297,7 @@ def validate_import_batch(df, latest_bq_tx=None, live_bank_balance=None, marker_
             type_label = f" ({bank_bal_type})" if bank_bal_type else ""
             empty_issues.append(
                 f"Live Bank Balance Mismatch: BigQuery Balance ({start_balance:,.2f} €) does not match "
-                f"Live Bank API Balance{type_label} ({bank_bal_amount:,.2f} €, diff: {bank_diff:+,.2f} €)."
+                f"Live Bank API Balance{type_label} ({effective_bank_booked_bal:,.2f} €, diff: {bank_diff:+,.2f} €)."
             )
         return {
             "all_passed": (marker_warning is None) and (bank_ok is not False),
@@ -252,7 +306,10 @@ def validate_import_batch(df, latest_bq_tx=None, live_bank_balance=None, marker_
             "expected_closing_balance": start_balance,
             "actual_closing_balance": start_balance,
             "live_bank_balance": bank_bal_amount,
+            "effective_bank_booked_balance": effective_bank_booked_bal,
             "live_bank_balance_type": bank_bal_type,
+            "pending_net_change": pending_net,
+            "pending_count": pending_count,
             "marker_found": marker_warning is None,
             "continuity_ok": True,
             "continuity_diff": 0.0,
@@ -317,8 +374,8 @@ def validate_import_batch(df, latest_bq_tx=None, live_bank_balance=None, marker_
     row_continuity_ok = len(row_breaks) == 0
 
     # Check 4: Live Bank API Booked Balance Match
-    if bank_bal_amount is not None:
-        bank_balance_diff = round(actual_closing_balance - bank_bal_amount, 2)
+    if effective_bank_booked_bal is not None:
+        bank_balance_diff = round(actual_closing_balance - effective_bank_booked_bal, 2)
         bank_balance_ok = abs(bank_balance_diff) <= 0.01
     else:
         bank_balance_diff = None
@@ -343,7 +400,7 @@ def validate_import_batch(df, latest_bq_tx=None, live_bank_balance=None, marker_
         type_label = f" ({bank_bal_type})" if bank_bal_type else ""
         issues.append(
             f"Live Bank Balance Mismatch: Batch Closing Balance ({actual_closing_balance:,.2f} €) does not match "
-            f"Live Bank API Balance{type_label} ({bank_bal_amount:,.2f} €, diff: {bank_balance_diff:+,.2f} €)."
+            f"Live Bank API Balance{type_label} ({effective_bank_booked_bal:,.2f} €, diff: {bank_balance_diff:+,.2f} €)."
         )
 
     all_passed = (
@@ -360,7 +417,10 @@ def validate_import_batch(df, latest_bq_tx=None, live_bank_balance=None, marker_
         "expected_closing_balance": expected_closing_balance,
         "actual_closing_balance": actual_closing_balance,
         "live_bank_balance": bank_bal_amount,
+        "effective_bank_booked_balance": effective_bank_booked_bal,
         "live_bank_balance_type": bank_bal_type,
+        "pending_net_change": pending_net,
+        "pending_count": pending_count,
         "marker_found": marker_found,
         "continuity_ok": continuity_ok,
         "continuity_diff": continuity_diff,

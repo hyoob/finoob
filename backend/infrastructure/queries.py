@@ -11,13 +11,13 @@ def get_merge_update_query(table_id, temp_table_id):
             T.last_updated = CURRENT_TIMESTAMP()
     """
 
-def get_latest_transaction_query(table_id, account_id):
+def get_latest_transaction_query(table_id, account_id, limit=10):
     return f"""
         SELECT *
         FROM `{table_id}`
         WHERE account_id = '{account_id}'
         ORDER BY transaction_number DESC, date DESC
-        LIMIT 1
+        LIMIT {int(limit)}
     """
 
 

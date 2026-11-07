@@ -64,6 +64,19 @@ def get_account_details(acc_id):
     return raw_data.get(acc_id, {})
 
 
+def get_linked_open_banking_accounts():
+    """
+    Returns a dictionary of {account_id: details} for all active accounts
+    that have a linked Enable Banking account UID.
+    """
+    raw_data = local_storage.load_json_data(config.ACCOUNTS_PATH)
+    linked = {}
+    for acc_id, details in raw_data.items():
+        if details.get("active", False) and details.get("enable_banking_uid"):
+            linked[acc_id] = details
+    return linked
+
+
 def link_enable_banking_account(acc_id, account_uid, valid_until=None, iban=None, sync_both_envs=True):
     """
     Saves the Enable Banking account_uid to the current environment's accounts file
@@ -131,6 +144,17 @@ def run_accounts_health_audit(table_id, show_archived=False):
             if eb_res and eb_res.get("amount") is not None:
                 api_bal = round(float(eb_res["amount"]), 2)
                 api_bal_type = eb_res.get("type")
+                if api_bal_type in ("ITAV", "ITBD"):
+                    try:
+                        from datetime import datetime, timedelta, timezone
+                        recent_from = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
+                        recent_raw = enable_banking_client.fetch_raw_transactions(eb_uid, date_from=recent_from)
+                        pend = enable_banking_client.calculate_pending_summary(recent_raw)
+                        if pend["count"] > 0:
+                            api_bal = round(api_bal - pend["net_change"], 2)
+                            api_bal_type = f"{api_bal_type} (excl. {pend['count']} pending)"
+                    except Exception:
+                        pass
 
         local_vs_bq_diff = round(local_bal - bq_bal, 2) if bq_bal is not None else None
         ref_bal = bq_bal if bq_bal is not None else local_bal

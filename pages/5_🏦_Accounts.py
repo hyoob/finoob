@@ -10,6 +10,7 @@ importlib.reload(queries)
 importlib.reload(enable_banking_client)
 importlib.reload(account_logic)
 importlib.reload(accounts_service)
+importlib.reload(ui)
 
 # This sets the title, layout
 ui.init_page("Accounts Overview")
@@ -28,6 +29,22 @@ df = accounts_service.get_accounts_dataframe(show_archived=show_archived)
 total_net_worth = accounts_service.calculate_total_balance(df)
 ui.render_net_worth(total_net_worth)
 
+# Alert banner if any linked Open Banking consent is expired or expiring within 14 days
+if "consent_days_left" in df.columns:
+    expiring_df = df[df["consent_days_left"].notna() & (df["consent_days_left"] <= 14)]
+    for _, exp_row in expiring_df.iterrows():
+        days_left = int(exp_row["consent_days_left"])
+        if days_left < 0:
+            st.error(
+                f"🚨 Open Banking link for **{exp_row['account_name']}** expired {abs(days_left)} day(s) ago. "
+                "Re-authorize it on the **📥 Import** page."
+            )
+        else:
+            st.warning(
+                f"⚠️ Open Banking link for **{exp_row['account_name']}** expires in **{days_left} day(s)**. "
+                "Re-authorize it soon on the **📥 Import** page."
+            )
+
 # --- SECTION 2: TABLE ---
 styled_df = ui.format_accounts_table(df)
 
@@ -36,7 +53,7 @@ st.dataframe(
     column_config=ui.get_accounts_table_config(),
     use_container_width=True,
     hide_index=True,
-    column_order=["account_name", "balance", "last_updated"]
+    column_order=["account_name", "balance", "last_updated", "open_banking_status", "consent_expiry"]
 )
 
 # --- SECTION 2.5: ACCOUNT SYNC & BALANCE AUDIT ---

@@ -145,17 +145,37 @@ def create_session(code_or_url):
 def fetch_raw_transactions(account_uid, date_from=None, date_to=None):
     """
     Fetches all booked transactions for an account_uid, handling pagination via continuation_key.
+    If the bank rejects a date_from older than 90 days (PSD2 unattended SCA window restriction),
+    automatically falls back to an 89-day lookback window.
     """
     all_transactions = []
     continuation_key = None
+    effective_date_from = date_from
 
     while True:
         params = {
-            "date_from": date_from,
+            "date_from": effective_date_from,
             "date_to": date_to,
             "continuation_key": continuation_key,
         }
-        resp = _api_request("GET", f"/accounts/{account_uid}/transactions", params=params)
+        try:
+            resp = _api_request("GET", f"/accounts/{account_uid}/transactions", params=params)
+        except RuntimeError as e:
+            # PSD2 banks (like PTSB) reject date_from > 90 days ago with HTTP 400 ASPSP_ERROR
+            # once the initial 5-minute SCA window has closed.
+            fallback_date_from = (datetime.now(timezone.utc).date() - timedelta(days=89)).strftime("%Y-%m-%d")
+            if (
+                continuation_key is None
+                and effective_date_from is not None
+                and effective_date_from < fallback_date_from
+                and ("HTTP 400" in str(e) or "ASPSP_ERROR" in str(e))
+            ):
+                effective_date_from = fallback_date_from
+                params["date_from"] = effective_date_from
+                resp = _api_request("GET", f"/accounts/{account_uid}/transactions", params=params)
+            else:
+                raise
+
         tx_list = resp.get("transactions", [])
         all_transactions.extend(tx_list)
 
@@ -216,6 +236,37 @@ def fetch_booked_balance(account_uid):
     except Exception as e:
         print(f"Warning: Could not fetch booked balance for {account_uid}: {e}")
         return None
+
+
+def calculate_pending_summary(raw_txs):
+    """
+    Calculates the net impact (credit - debit) and count of pending ('PDNG')
+    transactions in a raw Enable Banking transaction list.
+    Used to reconcile booked closing balances against intraday ('ITAV'/'ITBD') bank balances.
+    """
+    pending_net = 0.0
+    pending_count = 0
+    for tx in raw_txs or []:
+        if tx.get("status") == "PDNG":
+            amt_obj = tx.get("transaction_amount") or {}
+            try:
+                amount = round(float(amt_obj.get("amount", 0.0)), 2)
+            except (ValueError, TypeError):
+                continue
+            indicator = tx.get("credit_debit_indicator", "")
+            if indicator == "DBIT":
+                pending_net -= amount
+                pending_count += 1
+            elif indicator == "CRDT":
+                pending_net += amount
+                pending_count += 1
+            elif amount < 0:
+                pending_net += amount
+                pending_count += 1
+            elif amount > 0:
+                pending_net += amount
+                pending_count += 1
+    return {"net_change": round(pending_net, 2), "count": pending_count}
 
 
 def _extract_description(tx):

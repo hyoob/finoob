@@ -16,6 +16,42 @@ def create_account_map(raw_data):
             
     return id_name_map
 
+def _compute_open_banking_columns(row, supported_banks=("cmb", "ptsb", "revolut")):
+    """Computes human-readable Open Banking status and expiry countdown for an account row."""
+    uid = row.get("enable_banking_uid")
+    valid_until_raw = row.get("enable_banking_valid_until")
+    bank = row.get("bank")
+
+    if not uid:
+        status = "⚪ Not Linked" if bank in supported_banks else "➖ Manual / CSV"
+        return status, "—", None
+
+    if not valid_until_raw or pd.isna(valid_until_raw):
+        return "🟢 Linked", "Unknown expiry", None
+
+    try:
+        valid_dt = pd.to_datetime(valid_until_raw)
+        days_left = (valid_dt.date() - datetime.now().date()).days
+        date_str = valid_dt.strftime("%Y-%m-%d")
+
+        if days_left < 0:
+            status = "🚨 Expired"
+            expiry_str = f"{date_str} (expired {abs(days_left)}d ago)"
+        elif days_left == 0:
+            status = "⚠️ Refresh Today"
+            expiry_str = f"{date_str} (today)"
+        elif days_left <= 14:
+            status = "⚠️ Refresh Soon"
+            expiry_str = f"{date_str} (in {days_left} day{'s' if days_left != 1 else ''})"
+        else:
+            status = "🟢 Linked"
+            expiry_str = f"{date_str} (in {days_left} days)"
+
+        return status, expiry_str, days_left
+    except Exception:
+        return "🟢 Linked", str(valid_until_raw), None
+
+
 def transform_to_dataframe(raw_data, show_archived):
     """
     Transforms data into a flat DataFrame for the UI.
@@ -24,10 +60,17 @@ def transform_to_dataframe(raw_data, show_archived):
     for acc_id, details in raw_data.items():
         row = details.copy()
         row['account_id'] = acc_id  # Keep ID for reference
+        ob_status, ob_expiry, ob_days = _compute_open_banking_columns(row)
+        row['open_banking_status'] = ob_status
+        row['consent_expiry'] = ob_expiry
+        row['consent_days_left'] = ob_days
         rows.append(row)
     
     if not rows:
-        return pd.DataFrame(columns=["account_name", "bank", "balance", "last_updated", "account_id"])
+        return pd.DataFrame(columns=[
+            "account_name", "bank", "balance", "last_updated",
+            "open_banking_status", "consent_expiry", "consent_days_left", "account_id"
+        ])
         
     df = pd.DataFrame(rows)
 
