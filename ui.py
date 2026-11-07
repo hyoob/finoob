@@ -100,7 +100,7 @@ def get_categorization_editor_config(category_options):
 def get_import_editor_config(category_options, include_account_col=False):
     """
     Returns config for MODE 1: Import Transactions.
-    Shows Date/Label/Category (and Account if include_account_col=True).
+    Shows Date/Label/Category, plus inline rule columns (and Account if include_account_col=True).
     """
     cfg = {
         "date": st.column_config.DateColumn(
@@ -118,6 +118,17 @@ def get_import_editor_config(category_options, include_account_col=False):
             width="medium",
             options=category_options,
             required=True,
+        ),
+        "save_as_rule": st.column_config.CheckboxColumn(
+            "➕ Rule",
+            help="Tick to save this row's Category + Label + Rule Keyword (or Description if blank) as a permanent categorization rule.",
+            width="small",
+        ),
+        "rule_keyword": st.column_config.TextColumn(
+            "Rule Keyword",
+            help="Optional keyword pattern (use leading/trailing '*' for wildcards). If left blank when '➕ Rule' is ticked, defaults to the row's Description.",
+            width="medium",
+            required=False,
         ),
     }
     if include_account_col:

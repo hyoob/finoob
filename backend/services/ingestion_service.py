@@ -1,7 +1,7 @@
 from datetime import timedelta
 from backend.infrastructure import local_storage, parsers, db_client, queries, enable_banking_client
 from backend.domain import account_logic, categorization_logic, transaction_logic
-from backend.services import accounts_service
+from backend.services import accounts_service, rules_service
 import pandas as pd
 import config
 
@@ -26,6 +26,7 @@ def _deduplicate_and_categorize(df, table_id, account_id, category_data):
 
     if not new_transactions.empty:
         categorization_logic.categorize_transactions(new_transactions, category_data)
+        categorization_logic.ensure_rule_columns(new_transactions)
 
     return new_transactions, warning, latest_bq_date
 
@@ -97,6 +98,12 @@ def save_transactions_workflow(table_id, account_id, edited_df):
     # TODO: Consider using repository pattern for DB interactions
 
     account_data = local_storage.load_json_data(config.ACCOUNTS_PATH)
+
+    # Auto-save any checked inline categorization rules before stripping UI rule columns
+    checked_rules, _ = categorization_logic.extract_checked_rules_from_df(edited_df)
+    if checked_rules:
+        rules_service.add_rules_batch(checked_rules)
+    edited_df = categorization_logic.strip_rule_columns(edited_df.copy())
 
     # Ensure date column is datetime.date
     edited_df["date"] = pd.to_datetime(edited_df["date"]).dt.date
@@ -289,11 +296,17 @@ def save_multi_account_transactions_workflow(table_id, combined_edited_df):
     if combined_edited_df is None or combined_edited_df.empty:
         return 0, 0, True, None
 
+    # Auto-save any checked inline categorization rules before stripping UI rule columns
+    checked_rules, _ = categorization_logic.extract_checked_rules_from_df(combined_edited_df)
+    if checked_rules:
+        rules_service.add_rules_batch(checked_rules)
+    work_df = categorization_logic.strip_rule_columns(combined_edited_df.copy())
+
     account_data = local_storage.load_json_data(config.ACCOUNTS_PATH)
     enriched_batches = []
     closing_balances = {}
 
-    for acc_id, group_df in combined_edited_df.groupby("account_id", sort=False):
+    for acc_id, group_df in work_df.groupby("account_id", sort=False):
         if group_df.empty:
             continue
 

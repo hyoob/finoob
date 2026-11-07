@@ -162,6 +162,97 @@ def categorize_transactions(df, category_data):
     df[["category", "label"]] = df.apply(categorize_row, axis=1)
 
 
+def recategorize_uncategorized_rows(df, category_data):
+    """
+    Re-runs categorization rules ONLY on rows in df whose 'category' is currently
+    empty, NaN, or 'TBD', preserving any manual edits on already-categorized rows.
+    Returns the number of rows that were newly assigned a category.
+    """
+    if df is None or df.empty:
+        return 0
+
+    if "category" not in df.columns:
+        df["category"] = ""
+    if "label" not in df.columns:
+        df["label"] = ""
+
+    uncat_mask = (
+        df["category"].isna()
+        | (df["category"].astype(str).str.strip() == "")
+        | (df["category"].astype(str).str.strip() == "TBD")
+    )
+    if not uncat_mask.any():
+        return 0
+
+    sub_df = df.loc[uncat_mask].copy()
+    categorize_transactions(sub_df, category_data)
+
+    newly_matched_mask = sub_df["category"].astype(str).str.strip() != ""
+    matched_indices = sub_df.index[newly_matched_mask]
+    for idx in matched_indices:
+        df.at[idx, "category"] = sub_df.at[idx, "category"]
+        df.at[idx, "label"] = sub_df.at[idx, "label"]
+
+    return len(matched_indices)
+
+
+def ensure_rule_columns(df):
+    """Ensures UI rule-creation columns ('save_as_rule', 'rule_keyword') exist on df."""
+    if df is None or df.empty:
+        return df
+    if "save_as_rule" not in df.columns:
+        df["save_as_rule"] = False
+    else:
+        df["save_as_rule"] = df["save_as_rule"].fillna(False).astype(bool)
+    if "rule_keyword" not in df.columns:
+        df["rule_keyword"] = ""
+    else:
+        df["rule_keyword"] = df["rule_keyword"].fillna("").astype(str)
+    return df
+
+
+def strip_rule_columns(df):
+    """Drops UI-only rule-creation columns before saving transactions to BigQuery."""
+    if df is None:
+        return df
+    return df.drop(columns=["save_as_rule", "rule_keyword"], errors="ignore")
+
+
+def extract_checked_rules_from_df(df):
+    """
+    Extracts candidate rules from rows where save_as_rule is True.
+    If rule_keyword is blank on a checked row, falls back to the row's description.
+    Returns (valid_rules_list, incomplete_row_descriptions).
+    """
+    if df is None or df.empty or "save_as_rule" not in df.columns:
+        return [], []
+
+    checked = df[df["save_as_rule"] == True]
+    if checked.empty:
+        return [], []
+
+    valid_rules = []
+    incomplete = []
+    for _, row in checked.iterrows():
+        cat = str(row.get("category") or "").strip()
+        lbl = str(row.get("label") or "").strip()
+        desc = str(row.get("description") or "").strip()
+        kw = str(row.get("rule_keyword") or "").strip()
+        if not kw:
+            kw = desc
+
+        if not cat or not lbl or not kw:
+            incomplete.append(desc or kw or "Row")
+        else:
+            valid_rules.append({
+                "category": cat,
+                "keyword": kw,
+                "label": lbl,
+            })
+
+    return valid_rules, incomplete
+
+
 def prepare_keywords_dataframe(data_list):
     """
     Transforms a list of keyword dictionaries into a sorted DataFrame.

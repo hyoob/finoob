@@ -6,7 +6,7 @@ import config
 import ui
 from backend.domain import account_logic, categorization_logic, transaction_logic
 from backend.infrastructure import enable_banking_client, queries
-from backend.services import accounts_service, app_service, ingestion_service
+from backend.services import accounts_service, app_service, ingestion_service, rules_service
 
 # Ensure updated backend modules are reloaded in an already-running Streamlit server
 importlib.reload(queries)
@@ -14,6 +14,7 @@ importlib.reload(account_logic)
 importlib.reload(transaction_logic)
 importlib.reload(categorization_logic)
 importlib.reload(enable_banking_client)
+importlib.reload(rules_service)
 importlib.reload(accounts_service)
 importlib.reload(ingestion_service)
 importlib.reload(ui)
@@ -23,6 +24,9 @@ ui.init_page("Import")
 
 # loads all data variables
 categories, category_options, account_map, table_id = app_service.load_global_context()
+
+if "pending_rule_toast" in st.session_state:
+    st.toast(st.session_state.pop("pending_rule_toast"), icon="⚡")
 
 hdr_col1, hdr_col2 = st.columns([3, 1])
 hdr_col1.header("📥 Import New Transactions")
@@ -41,6 +45,130 @@ if config.ENV == "dev":
             st.cache_data.clear()
         st.success("✅ Dev sandbox (`sample_transactions` & `accounts_dev.json`) reset from `prod`!")
         st.rerun()
+
+
+def _render_rule_toolbar(df_snapshot, key_prefix, on_apply_rules):
+    """
+    Renders the categorization progress counter and the '⚡ Advanced Rule / New Category' popover
+    above the transactions editor.
+    """
+    if df_snapshot is None or df_snapshot.empty:
+        return
+
+    uncat_mask = (
+        df_snapshot["category"].isna()
+        | (df_snapshot["category"].astype(str).str.strip() == "")
+        | (df_snapshot["category"].astype(str).str.strip() == "TBD")
+    )
+    total_cnt = len(df_snapshot)
+    uncat_cnt = int(uncat_mask.sum())
+    cat_cnt = total_cnt - uncat_cnt
+
+    tb_col1, tb_col2 = st.columns([3, 1])
+    tb_col1.caption(
+        f"🏷️ **{cat_cnt}/{total_cnt} categorized** (`{uncat_cnt}` uncategorized) — "
+        "💡 *Tick **➕ Rule** on any row in the table (and optionally set **Rule Keyword**) to save it as a rule, "
+        "or use **⚡ Advanced Rule / New Category**.*"
+    )
+
+    with tb_col2.popover("⚡ Advanced Rule / New Category", use_container_width=True):
+        pop_tab1, pop_tab2 = st.tabs(["➕ Add Rule", "📂 New Category"])
+
+        with pop_tab1:
+            uncat_rows = df_snapshot.loc[uncat_mask]
+            prefill_options = ["-- Custom keyword --"]
+            prefill_map = {}
+            seen_descs = set()
+            for _, urow in uncat_rows.iterrows():
+                desc = str(urow.get("description") or "").strip()
+                if desc and desc not in seen_descs:
+                    seen_descs.add(desc)
+                    amt = max(float(urow.get("debit") or 0.0), float(urow.get("credit") or 0.0))
+                    opt_label = f"{desc[:45]} ({amt:.2f} €)"
+                    prefill_options.append(opt_label)
+                    prefill_map[opt_label] = desc
+
+            selected_prefill = st.selectbox(
+                "Pre-fill from uncategorized row (optional):",
+                options=prefill_options,
+                key=f"{key_prefix}_pop_prefill",
+            )
+            default_kw = prefill_map.get(selected_prefill, "")
+
+            kw_val = st.text_input(
+                "Keyword (use leading/trailing `*` for wildcards):",
+                value=default_kw,
+                placeholder="e.g. Applegreen* or *SPAR*",
+                key=f"{key_prefix}_pop_kw_{selected_prefill}",
+            )
+            cat_val = st.selectbox(
+                "Category:",
+                options=category_options,
+                key=f"{key_prefix}_pop_cat",
+            )
+            lbl_val = st.text_input(
+                "Clean Label:",
+                placeholder="e.g. Gas Station",
+                key=f"{key_prefix}_pop_lbl",
+            )
+            mc1, mc2 = st.columns(2)
+            min_amt = mc1.number_input(
+                "Min Amount (€, optional):",
+                min_value=0.0,
+                step=0.01,
+                value=None,
+                key=f"{key_prefix}_pop_min",
+            )
+            max_amt = mc2.number_input(
+                "Max Amount (€, optional):",
+                min_value=0.0,
+                step=0.01,
+                value=None,
+                key=f"{key_prefix}_pop_max",
+            )
+
+            if st.button(
+                "➕ Save Rule & Apply to Batch",
+                type="primary",
+                use_container_width=True,
+                key=f"{key_prefix}_pop_save_rule_btn",
+            ):
+                if not kw_val.strip() or not lbl_val.strip():
+                    st.error("Please provide both a Keyword and a Clean Label.")
+                else:
+                    ok, msg, updated_cats = rules_service.add_rules_batch([
+                        {
+                            "category": cat_val,
+                            "keyword": kw_val.strip(),
+                            "label": lbl_val.strip(),
+                            "min_amount": min_amt,
+                            "max_amount": max_amt,
+                        }
+                    ])
+                    if ok:
+                        st.cache_data.clear()
+                        on_apply_rules(updated_cats, f"Added rule '{kw_val.strip()}' → {cat_val} / {lbl_val.strip()}")
+                    else:
+                        st.error(msg)
+
+        with pop_tab2:
+            new_cat_name = st.text_input(
+                "New Category Name:",
+                placeholder="e.g. Subscriptions",
+                key=f"{key_prefix}_pop_new_cat_name",
+            )
+            if st.button(
+                "➕ Create Category",
+                type="primary",
+                use_container_width=True,
+                key=f"{key_prefix}_pop_create_cat_btn",
+            ):
+                ok, msg, updated_cats = rules_service.add_category(new_cat_name)
+                if ok:
+                    st.cache_data.clear()
+                    on_apply_rules(updated_cats, msg)
+                else:
+                    st.warning(msg)
 
 
 def _render_single_account_editor_and_save(new_transactions, warning, latest_bq_date, account_id, key_prefix):
@@ -81,18 +209,60 @@ def _render_single_account_editor_and_save(new_transactions, warning, latest_bq_
 
     st.success(f"✅ Found {len(new_transactions)} new transactions.")
 
+    buf_key = f"{key_prefix}_df_buf_{account_id}"
+    rev_key = f"{key_prefix}_rev_{account_id}"
+    latest_edit_key = f"{key_prefix}_latest_edit_{account_id}"
+    if buf_key not in st.session_state:
+        st.session_state[buf_key] = categorization_logic.ensure_rule_columns(new_transactions.copy())
+
+    def _apply_single_rules(updated_cats, action_msg):
+        cur_df = st.session_state.get(latest_edit_key, st.session_state[buf_key]).copy()
+        cur_df = categorization_logic.ensure_rule_columns(cur_df)
+        cur_df["save_as_rule"] = False
+        cur_df["rule_keyword"] = ""
+        matched = categorization_logic.recategorize_uncategorized_rows(cur_df, updated_cats)
+        st.session_state[buf_key] = cur_df
+        st.session_state[rev_key] = st.session_state.get(rev_key, 0) + 1
+        st.session_state.pending_rule_toast = f"{action_msg} (matched {matched} uncategorized row(s))"
+        st.rerun()
+
+    _render_rule_toolbar(
+        st.session_state.get(latest_edit_key, st.session_state[buf_key]),
+        key_prefix=f"{key_prefix}_{account_id}",
+        on_apply_rules=_apply_single_rules,
+    )
+
     column_cfg = ui.get_import_editor_config(category_options, include_account_col=False)
+    cur_rev = st.session_state.get(rev_key, 0)
 
     edited_df = st.data_editor(
-        new_transactions,
+        st.session_state[buf_key],
         column_config=column_cfg,
         num_rows="dynamic",
         use_container_width=True,
         hide_index=True,
-        key=f"{key_prefix}_editor",
+        key=f"{key_prefix}_editor_{account_id}_{cur_rev}",
     )
+    st.session_state[latest_edit_key] = edited_df
 
     if not edited_df.empty:
+        valid_rules, incomplete_rows = categorization_logic.extract_checked_rules_from_df(edited_df)
+        if incomplete_rows:
+            st.warning(
+                f"⚠️ **➕ Rule** is ticked on {len(incomplete_rows)} row(s) ({', '.join(incomplete_rows[:3])}), "
+                "but **Category** or **Label** is still empty. Fill in Category and Label on those row(s) to save them as rules."
+            )
+        if valid_rules:
+            if st.button(
+                f"⚡ Save {len(valid_rules)} Ticked Rule(s) & Apply to Batch",
+                key=f"{key_prefix}_apply_ticked_btn_{cur_rev}",
+            ):
+                ok, msg, updated_cats = rules_service.add_rules_batch(valid_rules)
+                if ok:
+                    st.cache_data.clear()
+                    _apply_single_rules(updated_cats, msg)
+                else:
+                    st.error(msg)
         ctx_key = f"recon_ctx_{account_id}_{table_id}"
         if ctx_key not in st.session_state:
             st.session_state[ctx_key] = ingestion_service.get_reconciliation_context(account_id, table_id)
@@ -207,14 +377,18 @@ if tab_sync is not None:
             )
 
             col_btn.write("")  # Vertical alignment spacer
-            if col_btn.button(
+            fetch_clicked = col_btn.button(
                 "🔄 Fetch All Selected",
                 type="primary",
                 disabled=len(selected_acc_ids) == 0,
                 use_container_width=True,
                 key="fetch_multi_api_btn",
-            ):
-                prog_bar = st.progress(0, text="Starting Open Banking sync...")
+            )
+
+            progress_slot = st.empty()
+
+            if fetch_clicked:
+                prog_bar = progress_slot.progress(0, text="Starting Open Banking sync...")
 
                 def _update_progress(idx, total, acc_name):
                     frac = idx / max(total, 1)
@@ -232,12 +406,14 @@ if tab_sync is not None:
                         categories,
                         progress_callback=_update_progress,
                     )
-                    prog_bar.empty()
+                    progress_slot.empty()
                     st.session_state.multi_api_sync_result = sync_results
+                    st.session_state.pop("multi_sync_latest_edit", None)
                     # Increment batch counter so scorecard checkboxes & editor reset cleanly on new fetch
                     st.session_state.multi_sync_run_id = st.session_state.get("multi_sync_run_id", 0) + 1
+                    st.rerun()
                 except Exception as e:
-                    prog_bar.empty()
+                    progress_slot.empty()
                     print(traceback.format_exc())
                     st.error(f"Error during multi-account sync: {e}")
 
@@ -407,8 +583,40 @@ if tab_sync is not None:
                         )
                     else:
                         combined_new_df = pd.concat(
-                            [sync_results[aid]["new_transactions"] for aid in included_acc_ids],
+                            [
+                                categorization_logic.ensure_rule_columns(sync_results[aid]["new_transactions"].copy())
+                                for aid in included_acc_ids
+                            ],
                             ignore_index=True,
+                        )
+                        editor_rev = st.session_state.get("multi_sync_editor_rev", 0)
+
+                        def _apply_multi_rules(updated_cats, action_msg):
+                            latest_df = st.session_state.get("multi_sync_latest_edit", combined_new_df).copy()
+                            total_matched = 0
+                            for aid, r in st.session_state.multi_api_sync_result.items():
+                                if aid in included_acc_ids and "account_id" in latest_df.columns:
+                                    acc_slice = latest_df[latest_df["account_id"] == aid].copy()
+                                else:
+                                    acc_slice = r["new_transactions"].copy()
+                                if not acc_slice.empty:
+                                    acc_slice = categorization_logic.ensure_rule_columns(acc_slice)
+                                    acc_slice["save_as_rule"] = False
+                                    acc_slice["rule_keyword"] = ""
+                                    total_matched += categorization_logic.recategorize_uncategorized_rows(
+                                        acc_slice, updated_cats
+                                    )
+                                    r["new_transactions"] = acc_slice
+                            st.session_state.multi_sync_editor_rev = editor_rev + 1
+                            st.session_state.pending_rule_toast = (
+                                f"{action_msg} (auto-categorized {total_matched} row(s))"
+                            )
+                            st.rerun()
+
+                        _render_rule_toolbar(
+                            st.session_state.get("multi_sync_latest_edit", combined_new_df),
+                            key_prefix=f"multi_sync_{run_id}",
+                            on_apply_rules=_apply_multi_rules,
                         )
 
                         edited_combined_df = st.data_editor(
@@ -419,10 +627,31 @@ if tab_sync is not None:
                             num_rows="dynamic",
                             use_container_width=True,
                             hide_index=True,
-                            key=f"multi_sync_editor_{run_id}_{'_'.join(included_acc_ids)}",
+                            key=f"multi_sync_editor_{run_id}_{editor_rev}_{'_'.join(included_acc_ids)}",
                         )
+                        st.session_state.multi_sync_latest_edit = edited_combined_df
 
                         if not edited_combined_df.empty:
+                            valid_rules, incomplete_rows = categorization_logic.extract_checked_rules_from_df(
+                                edited_combined_df
+                            )
+                            if incomplete_rows:
+                                st.warning(
+                                    f"⚠️ **➕ Rule** is ticked on {len(incomplete_rows)} row(s) ({', '.join(incomplete_rows[:3])}), "
+                                    "but **Category** or **Label** is still empty. Fill in Category and Label on those row(s) to save them as rules."
+                                )
+                            if valid_rules:
+                                if st.button(
+                                    f"⚡ Save {len(valid_rules)} Ticked Rule(s) & Apply to Batch",
+                                    key=f"multi_sync_apply_ticked_{run_id}_{editor_rev}",
+                                ):
+                                    ok, msg, updated_cats = rules_service.add_rules_batch(valid_rules)
+                                    if ok:
+                                        st.cache_data.clear()
+                                        _apply_multi_rules(updated_cats, msg)
+                                    else:
+                                        st.error(msg)
+
                             # Live re-validation per included account in case amounts/rows were edited in the table
                             editor_issues = []
                             for aid in included_acc_ids:
