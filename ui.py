@@ -103,6 +103,11 @@ def get_import_editor_config(category_options, include_account_col=False):
     Shows Date/Label/Category, plus inline rule columns (and Account if include_account_col=True).
     """
     cfg = {
+        "bulk_select": st.column_config.CheckboxColumn(
+            "🏷️ Bulk",
+            help="Tick multiple rows and click the '🏷️ Bulk Categorize' button to assign a Category and Label to all of them at once.",
+            width="small",
+        ),
         "date": st.column_config.DateColumn(
             "date",
             format="YYYY-MM-DD"

@@ -78,7 +78,7 @@ def _format_rule_toolbar_caption(df_snapshot, staged_links=None):
 
     return (
         f"🏷️ **{cat_cnt}/{total_cnt} categorized** (`{uncat_cnt}` uncategorized){reimb_part} — "
-        "💡 *Tick **➕ Rule** to create a rule/category, or **🔗 Reimb** on a credit row to link reimbursement(s).*"
+        "💡 *Tick **➕ Rule** to add a rule, **🔗 Reimb** to link reimbursement(s), or **🏷️ Bulk** on multiple rows to bulk categorize.*"
     )
 
 
@@ -357,17 +357,33 @@ def _open_rule_dialog_on_tick(full_df, key_prefix, on_apply_rules, on_sync_row_e
 
 def _render_rule_toolbar(df_snapshot, key_prefix, on_apply_rules, on_toggle_uncat=None, staged_links=None):
     """
-    Renders the categorization progress counter and the '🎯 Show only uncategorized' toggle
-    above the transactions editor. Returns (show_only_uncat, caption_slot).
+    Renders the categorization progress counter, a placeholder slot for the Bulk Categorize button,
+    a sort selector, and the '🎯 Show only uncategorized' toggle above the transactions editor.
+    Returns (show_only_uncat, sort_mode, caption_slot, bulk_top_slot).
     """
     if df_snapshot is None or df_snapshot.empty:
-        return False, None
+        return False, categorization_logic.SORT_MODE_SIMILAR_DESC, None, None
 
-    tb_col1, tb_col2 = st.columns([3.0, 1.0])
+    tb_col1, tb_col2, tb_col3, tb_col4 = st.columns([1.9, 0.9, 1.2, 0.9])
     caption_slot = tb_col1.empty()
     caption_slot.caption(_format_rule_toolbar_caption(df_snapshot, staged_links=staged_links))
+    bulk_top_slot = tb_col2.empty()
 
-    show_only_uncat = tb_col2.toggle(
+    def _on_sort_change():
+        if on_toggle_uncat is not None:
+            on_toggle_uncat(reset_pinned_uncat=False)
+
+    sort_mode = tb_col3.selectbox(
+        "Sort rows",
+        options=categorization_logic.IMPORT_SORT_OPTIONS,
+        index=0,
+        key=f"{key_prefix}_sort_mode_select",
+        label_visibility="collapsed",
+        on_change=_on_sort_change,
+        help="Group similar descriptions together to speed up bulk categorization and rule creation, or sort by frequency, date, or amount. Underlying chronological order is always preserved when saving.",
+    )
+
+    show_only_uncat = tb_col4.toggle(
         "🎯 Show only uncategorized",
         value=False,
         key=f"{key_prefix}_only_uncat_toggle",
@@ -375,7 +391,132 @@ def _render_rule_toolbar(df_snapshot, key_prefix, on_apply_rules, on_toggle_unca
         help="Filter the table to show only transactions without a category. Rows stay visible while you edit them until you apply rules, hide completed rows, or flip this toggle.",
     )
 
-    return show_only_uncat, caption_slot
+    return show_only_uncat, sort_mode, caption_slot, bulk_top_slot
+
+
+def _render_bulk_categorize_action(full_df, key_prefix, bulk_top_slot, on_apply_bulk, on_clear_bulk):
+    """
+    When 1+ rows have 'bulk_select' ticked, renders a '🏷️ Bulk Categorize (X selected)' button
+    (both in the top toolbar slot and below the table) that opens a non-blocking, draggable modal
+    to assign a Category and Clean Label to all selected rows at once.
+    """
+    if full_df is None or full_df.empty or "bulk_select" not in full_df.columns:
+        return
+
+    bulk_rows = full_df[full_df["bulk_select"] == True]
+    if bulk_rows.empty:
+        return
+
+    selected_rids = bulk_rows["_row_id"].astype(str).tolist()
+    cnt = len(selected_rids)
+
+    top_clicked = False
+    if bulk_top_slot is not None:
+        top_clicked = bulk_top_slot.button(
+            f"🏷️ Bulk Categorize ({cnt} selected)",
+            type="primary",
+            use_container_width=True,
+            key=f"{key_prefix}_bulk_top_btn_{cnt}",
+        )
+
+    bc_col1, bc_col2, _ = st.columns([1.4, 0.9, 2.5])
+    bot_clicked = bc_col1.button(
+        f"🏷️ Bulk Categorize ({cnt} selected)",
+        type="primary",
+        use_container_width=True,
+        key=f"{key_prefix}_bulk_bot_btn_{cnt}",
+    )
+    if bc_col2.button(
+        "✖ Clear Bulk Selection",
+        use_container_width=True,
+        key=f"{key_prefix}_bulk_clear_btn_{cnt}",
+    ):
+        on_clear_bulk()
+        st.rerun()
+
+    if not (top_clicked or bot_clicked):
+        return
+
+    preview_descs = [str(r.get("description") or "").strip() for _, r in bulk_rows.head(4).iterrows()]
+    preview_str = ", ".join(preview_descs) + (f" (+{cnt - 4} more)" if cnt > 4 else "")
+
+    @st.dialog(f"🏷️ Bulk Categorize {cnt} Row(s) (Drag header to move, edges to resize)")
+    def _bulk_modal():
+        _inject_draggable_resizable_dialog()
+        live_cats = rules_service.get_all_categories()
+        live_cat_options = sorted(list(live_cats.keys()))
+
+        st.caption(f"📋 **Selected ({cnt}):** `{preview_str}`")
+        btab1, btab2 = st.tabs(["🏷️ Assign Category & Label", "📂 New Category"])
+
+        with btab1:
+            created_cat = st.session_state.get("dlg_bulk_created_cat")
+            default_cat_idx = (
+                live_cat_options.index(created_cat)
+                if (created_cat and created_cat in live_cat_options)
+                else None
+            )
+            cat_val = st.selectbox(
+                "Category:",
+                options=live_cat_options,
+                index=default_cat_idx,
+                placeholder="Select a category...",
+                key=f"{key_prefix}_bulk_dlg_cat_{created_cat or ''}",
+            )
+            lbl_val = st.text_input(
+                "Clean Label:",
+                placeholder="e.g. Groceries / Coffee / Transfer",
+                key=f"{key_prefix}_bulk_dlg_lbl",
+            )
+
+            mb1, mb2 = st.columns([2, 1])
+            if mb1.button(
+                f"✅ Apply to {cnt} Selected Row(s)",
+                type="primary",
+                use_container_width=True,
+                key=f"{key_prefix}_bulk_dlg_apply_btn",
+            ):
+                if not cat_val or not lbl_val.strip():
+                    st.error("Please select a Category and enter a Clean Label.")
+                else:
+                    st.session_state.pop("dlg_bulk_created_cat", None)
+                    st.session_state.pending_rule_toast = (
+                        f"🏷️ Bulk-categorized {cnt} row(s) → {cat_val} / {lbl_val.strip()}"
+                    )
+                    on_apply_bulk(selected_rids, cat_val, lbl_val.strip())
+                    st.rerun()
+
+            if mb2.button(
+                "Cancel",
+                use_container_width=True,
+                key=f"{key_prefix}_bulk_dlg_cancel_btn",
+            ):
+                st.session_state.pop("dlg_bulk_created_cat", None)
+                st.rerun()
+
+        with btab2:
+            new_cat_name = st.text_input(
+                "New Category Name:",
+                placeholder="e.g. Subscriptions",
+                key=f"{key_prefix}_bulk_dlg_new_cat_name",
+            )
+            if st.button(
+                "➕ Create Category",
+                type="primary",
+                use_container_width=True,
+                key=f"{key_prefix}_bulk_dlg_create_cat_btn",
+            ):
+                ok, msg, _ = rules_service.add_category(new_cat_name)
+                if ok:
+                    st.cache_data.clear()
+                    st.session_state["dlg_bulk_created_cat"] = new_cat_name.strip()
+                    st.success(
+                        f"✅ {msg} — switch back to **🏷️ Assign Category & Label** (it is now selected for you)!"
+                    )
+                else:
+                    st.warning(msg)
+
+    _bulk_modal()
 
 
 def _render_staged_reimbursements_summary(staged_links_key):
@@ -769,6 +910,7 @@ def _render_single_account_editor_and_save(new_transactions, warning, latest_bq_
         cur_df = categorization_logic.ensure_rule_columns(cur_df)
         cur_df["save_as_rule"] = False
         cur_df["link_reimb"] = False
+        cur_df["bulk_select"] = False
         cur_df["rule_keyword"] = ""
         matched = categorization_logic.recategorize_uncategorized_rows(cur_df, updated_cats)
         st.session_state[buf_key] = cur_df
@@ -776,7 +918,7 @@ def _render_single_account_editor_and_save(new_transactions, warning, latest_bq_
         st.session_state.pending_rule_toast = f"{action_msg} (matched {matched} uncategorized row(s))"
         st.rerun()
 
-    show_only_uncat, caption_slot = _render_rule_toolbar(
+    show_only_uncat, sort_mode, caption_slot, bulk_top_slot = _render_rule_toolbar(
         st.session_state.get(latest_edit_key, st.session_state[buf_key]),
         key_prefix=f"{key_prefix}_{account_id}",
         on_apply_rules=_apply_single_rules,
@@ -797,6 +939,7 @@ def _render_single_account_editor_and_save(new_transactions, warning, latest_bq_
         view_df = master_df[
             master_df["_row_id"].astype(str).isin(st.session_state[pinned_uncat_key])
         ].copy()
+        view_df = categorization_logic.sort_transactions_for_display(view_df, sort_mode)
         shown_row_ids = view_df["_row_id"].tolist()
         if view_df.empty:
             st.success(
@@ -812,7 +955,7 @@ def _render_single_account_editor_and_save(new_transactions, warning, latest_bq_
                 num_rows="fixed",
                 use_container_width=True,
                 hide_index=True,
-                key=f"{key_prefix}_editor_{account_id}_{cur_rev}_uncat",
+                key=f"{key_prefix}_editor_{account_id}_{cur_rev}_{sort_mode}_uncat",
             )
             edited_df = categorization_logic.merge_edited_subset_into_master(
                 master_df, shown_row_ids, edited_view_df
@@ -820,13 +963,18 @@ def _render_single_account_editor_and_save(new_transactions, warning, latest_bq_
             newly_done_cnt = int((~categorization_logic.get_uncategorized_mask(edited_view_df)).sum())
     else:
         st.session_state.pop(pinned_uncat_key, None)
-        edited_df = st.data_editor(
-            master_df,
+        view_df = categorization_logic.sort_transactions_for_display(master_df, sort_mode)
+        shown_row_ids = view_df["_row_id"].tolist()
+        edited_view_df = st.data_editor(
+            view_df,
             column_config=column_cfg,
             num_rows="dynamic",
             use_container_width=True,
             hide_index=True,
-            key=f"{key_prefix}_editor_{account_id}_{cur_rev}_all",
+            key=f"{key_prefix}_editor_{account_id}_{cur_rev}_{sort_mode}_all",
+        )
+        edited_df = categorization_logic.merge_edited_subset_into_master(
+            master_df, shown_row_ids, edited_view_df
         )
         newly_done_cnt = 0
 
@@ -877,6 +1025,35 @@ def _render_single_account_editor_and_save(new_transactions, warning, latest_bq_
             st.session_state[buf_key] = cur
             st.session_state[rev_key] = st.session_state.get(rev_key, 0) + 1
 
+        def _apply_single_bulk(rids, cat_val, lbl_val):
+            cur = st.session_state.get(latest_edit_key, edited_df).copy()
+            cur = categorization_logic.ensure_rule_columns(cur)
+            rids_set = set(str(x) for x in rids)
+            for idx in cur.index:
+                if str(cur.at[idx, "_row_id"]) in rids_set:
+                    cur.at[idx, "category"] = cat_val
+                    if lbl_val:
+                        cur.at[idx, "label"] = lbl_val
+            cur["bulk_select"] = False
+            st.session_state[latest_edit_key] = cur
+            st.session_state[buf_key] = cur
+            st.session_state[rev_key] = st.session_state.get(rev_key, 0) + 1
+
+        def _clear_single_bulk():
+            cur = st.session_state.get(latest_edit_key, edited_df).copy()
+            cur = categorization_logic.ensure_rule_columns(cur)
+            cur["bulk_select"] = False
+            st.session_state[latest_edit_key] = cur
+            st.session_state[buf_key] = cur
+            st.session_state[rev_key] = st.session_state.get(rev_key, 0) + 1
+
+        _render_bulk_categorize_action(
+            edited_df,
+            key_prefix=f"{key_prefix}_{account_id}_{cur_rev}",
+            bulk_top_slot=bulk_top_slot,
+            on_apply_bulk=_apply_single_bulk,
+            on_clear_bulk=_clear_single_bulk,
+        )
         _open_rule_dialog_on_tick(
             edited_df,
             key_prefix=f"{key_prefix}_{account_id}_{cur_rev}",
@@ -1258,6 +1435,7 @@ if tab_sync is not None:
                                     acc_slice = categorization_logic.ensure_rule_columns(acc_slice)
                                     acc_slice["save_as_rule"] = False
                                     acc_slice["link_reimb"] = False
+                                    acc_slice["bulk_select"] = False
                                     acc_slice["rule_keyword"] = ""
                                     total_matched += categorization_logic.recategorize_uncategorized_rows(
                                         acc_slice, updated_cats
@@ -1269,7 +1447,7 @@ if tab_sync is not None:
                             )
                             st.rerun()
 
-                        show_only_uncat, caption_slot = _render_rule_toolbar(
+                        show_only_uncat, sort_mode, caption_slot, bulk_top_slot = _render_rule_toolbar(
                             st.session_state.get("multi_sync_latest_edit", combined_new_df),
                             key_prefix=f"multi_sync_{run_id}",
                             on_apply_rules=_apply_multi_rules,
@@ -1292,6 +1470,7 @@ if tab_sync is not None:
                                     st.session_state[pinned_uncat_multi_key]
                                 )
                             ].copy()
+                            view_df = categorization_logic.sort_transactions_for_display(view_df, sort_mode)
                             shown_row_ids = view_df["_row_id"].tolist()
                             if view_df.empty:
                                 st.success(
@@ -1307,7 +1486,7 @@ if tab_sync is not None:
                                     num_rows="fixed",
                                     use_container_width=True,
                                     hide_index=True,
-                                    key=f"multi_sync_editor_{run_id}_{editor_rev}_{'_'.join(included_acc_ids)}_uncat",
+                                    key=f"multi_sync_editor_{run_id}_{editor_rev}_{sort_mode}_{'_'.join(included_acc_ids)}_uncat",
                                 )
                                 edited_combined_df = categorization_logic.merge_edited_subset_into_master(
                                     combined_new_df, shown_row_ids, edited_view_df
@@ -1317,13 +1496,20 @@ if tab_sync is not None:
                                 )
                         else:
                             st.session_state.pop(pinned_uncat_multi_key, None)
-                            edited_combined_df = st.data_editor(
-                                combined_new_df,
+                            view_df = categorization_logic.sort_transactions_for_display(
+                                combined_new_df, sort_mode
+                            )
+                            shown_row_ids = view_df["_row_id"].tolist()
+                            edited_view_df = st.data_editor(
+                                view_df,
                                 column_config=col_cfg_multi,
                                 num_rows="dynamic",
                                 use_container_width=True,
                                 hide_index=True,
-                                key=f"multi_sync_editor_{run_id}_{editor_rev}_{'_'.join(included_acc_ids)}_all",
+                                key=f"multi_sync_editor_{run_id}_{editor_rev}_{sort_mode}_{'_'.join(included_acc_ids)}_all",
+                            )
+                            edited_combined_df = categorization_logic.merge_edited_subset_into_master(
+                                combined_new_df, shown_row_ids, edited_view_df
                             )
                             newly_done_cnt = 0
 
@@ -1376,6 +1562,33 @@ if tab_sync is not None:
                                 st.session_state.multi_sync_latest_edit = cur
                                 _commit_multi_edits(reset_pinned_uncat=False)
 
+                            def _apply_multi_bulk(rids, cat_val, lbl_val):
+                                cur = st.session_state.get("multi_sync_latest_edit", edited_combined_df).copy()
+                                cur = categorization_logic.ensure_rule_columns(cur)
+                                rids_set = set(str(x) for x in rids)
+                                for idx in cur.index:
+                                    if str(cur.at[idx, "_row_id"]) in rids_set:
+                                        cur.at[idx, "category"] = cat_val
+                                        if lbl_val:
+                                            cur.at[idx, "label"] = lbl_val
+                                cur["bulk_select"] = False
+                                st.session_state.multi_sync_latest_edit = cur
+                                _commit_multi_edits(reset_pinned_uncat=False)
+
+                            def _clear_multi_bulk():
+                                cur = st.session_state.get("multi_sync_latest_edit", edited_combined_df).copy()
+                                cur = categorization_logic.ensure_rule_columns(cur)
+                                cur["bulk_select"] = False
+                                st.session_state.multi_sync_latest_edit = cur
+                                _commit_multi_edits(reset_pinned_uncat=False)
+
+                            _render_bulk_categorize_action(
+                                edited_combined_df,
+                                key_prefix=f"multi_sync_{run_id}_{editor_rev}",
+                                bulk_top_slot=bulk_top_slot,
+                                on_apply_bulk=_apply_multi_bulk,
+                                on_clear_bulk=_clear_multi_bulk,
+                            )
                             _open_rule_dialog_on_tick(
                                 edited_combined_df,
                                 key_prefix=f"multi_sync_{run_id}_{editor_rev}",

@@ -242,14 +242,142 @@ def ensure_rule_columns(df):
         df["link_reimb"] = False
     else:
         df["link_reimb"] = df["link_reimb"].fillna(False).astype(bool)
+    if "bulk_select" not in df.columns:
+        df.insert(0, "bulk_select", False)
+    else:
+        df["bulk_select"] = df["bulk_select"].fillna(False).astype(bool)
+        if df.columns[0] != "bulk_select":
+            cols = ["bulk_select"] + [c for c in df.columns if c != "bulk_select"]
+            df = df[cols]
     return df
 
 
+SORT_MODE_SIMILAR_DESC = "🔤 Similar Description (A → Z)"
+SORT_MODE_FREQUENT_DESC = "🔁 Most Frequent Merchant First"
+SORT_MODE_DATE_ASC = "📅 Date (Oldest → Newest)"
+SORT_MODE_DATE_DESC = "📅 Date (Newest → Oldest)"
+SORT_MODE_AMOUNT_DESC = "💰 Amount (Largest → Smallest)"
+SORT_MODE_AMOUNT_ASC = "💸 Amount (Smallest → Largest)"
+
+IMPORT_SORT_OPTIONS = [
+    SORT_MODE_SIMILAR_DESC,
+    SORT_MODE_FREQUENT_DESC,
+    SORT_MODE_DATE_ASC,
+    SORT_MODE_DATE_DESC,
+    SORT_MODE_AMOUNT_DESC,
+    SORT_MODE_AMOUNT_ASC,
+]
+
+_BANK_BOILERPLATE_RE = re.compile(
+    r"\b(?:"
+    r"paiement\s+cb|achat\s+cb|facture\s+cb|avoir\s+cb|remboursement\s+cb|cb|"
+    r"carte|prlv\s+sepa|prelevement\s+sepa|prelevement|prlv|"
+    r"vir\s+sepa\s+recu|vir\s+sepa\s+emis|vir\s+sepa|virement\s+sepa|virement\s+instantane|virement|vir\s+inst|vir|"
+    r"retrait\s+dab|retrait|sepa|recu|emis|de|du|des|au|aux|pour|chez|ref|reference"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def normalize_description_keys(desc):
+    """
+    Returns (cluster_key, full_norm_key) for a transaction description so that
+    identical or similar merchant descriptions sort together even when they contain
+    different dates, card numbers, store numbers, or reference codes.
+    """
+    raw = str(desc or "").strip().lower()
+    if not raw:
+        return ("~", "~")
+
+    # Remove dates like 12/10, 12/10/2026, 2026-10-12
+    cleaned = re.sub(r"\b\d{1,4}[/.\-]\d{1,2}(?:[/.\-]\d{1,4})?\b", " ", raw)
+    # Remove common bank prefixes/boilerplate
+    cleaned = _BANK_BOILERPLATE_RE.sub(" ", cleaned)
+    # Extract purely alphabetical word tokens (2+ letters), ignoring reference codes with digits
+    words = [
+        w for w in re.findall(r"[a-zA-ZÀ-ÿ]+", cleaned)
+        if len(w) >= 2 and not re.fullmatch(r"x+", w)
+    ]
+    if not words:
+        return (raw, raw)
+
+    cluster_key = " ".join(words[:2])
+    full_norm_key = " ".join(words)
+    return (cluster_key, full_norm_key)
+
+
+def sort_transactions_for_display(df, sort_mode=SORT_MODE_SIMILAR_DESC):
+    """
+    Returns a sorted copy of df for display in st.data_editor without mutating
+    the underlying chronological order in master_df.
+    """
+    if df is None or df.empty:
+        return df
+
+    work = df.copy()
+    work["_orig_pos"] = range(len(work))
+
+    if sort_mode == SORT_MODE_DATE_ASC:
+        return work.drop(columns=["_orig_pos"]).reset_index(drop=True)
+
+    if sort_mode == SORT_MODE_DATE_DESC:
+        work["_sort_date"] = pd.to_datetime(work["date"], errors="coerce")
+        work = work.sort_values(
+            by=["_sort_date", "_orig_pos"],
+            ascending=[False, False],
+            kind="stable",
+        )
+        return work.drop(columns=["_orig_pos", "_sort_date"]).reset_index(drop=True)
+
+    if sort_mode in (SORT_MODE_AMOUNT_DESC, SORT_MODE_AMOUNT_ASC):
+        debits = pd.to_numeric(work.get("debit", 0), errors="coerce").fillna(0.0).abs()
+        credits = pd.to_numeric(work.get("credit", 0), errors="coerce").fillna(0.0).abs()
+        work["_sort_amt"] = pd.concat([debits, credits], axis=1).max(axis=1)
+        asc = sort_mode == SORT_MODE_AMOUNT_ASC
+        work = work.sort_values(
+            by=["_sort_amt", "_orig_pos"],
+            ascending=[asc, True],
+            kind="stable",
+        )
+        return work.drop(columns=["_orig_pos", "_sort_amt"]).reset_index(drop=True)
+
+    # Description grouping modes (SORT_MODE_SIMILAR_DESC or SORT_MODE_FREQUENT_DESC)
+    keys = [normalize_description_keys(d) for d in work.get("description", "")]
+    work["_cluster_key"] = [k[0] for k in keys]
+    work["_full_norm_key"] = [k[1] for k in keys]
+    work["_raw_desc_lower"] = work["description"].astype(str).str.strip().str.lower()
+
+    if sort_mode == SORT_MODE_FREQUENT_DESC:
+        counts = work["_cluster_key"].value_counts().to_dict()
+        work["_cluster_size"] = work["_cluster_key"].map(lambda k: counts.get(k, 1))
+        work = work.sort_values(
+            by=["_cluster_size", "_cluster_key", "_full_norm_key", "_raw_desc_lower", "_orig_pos"],
+            ascending=[False, True, True, True, True],
+            kind="stable",
+        )
+        return work.drop(
+            columns=["_orig_pos", "_cluster_key", "_full_norm_key", "_raw_desc_lower", "_cluster_size"]
+        ).reset_index(drop=True)
+
+    # Default: SORT_MODE_SIMILAR_DESC
+    work = work.sort_values(
+        by=["_cluster_key", "_full_norm_key", "_raw_desc_lower", "_orig_pos"],
+        ascending=[True, True, True, True],
+        kind="stable",
+    )
+    return work.drop(
+        columns=["_orig_pos", "_cluster_key", "_full_norm_key", "_raw_desc_lower"]
+    ).reset_index(drop=True)
+
+
 def strip_rule_columns(df):
-    """Drops UI-only rule-creation, reimbursement-link, and row-tracking columns before saving transactions to BigQuery."""
+    """Drops UI-only rule-creation, reimbursement-link, bulk-select, and row-tracking columns before saving transactions to BigQuery."""
     if df is None:
         return df
-    return df.drop(columns=["save_as_rule", "rule_keyword", "link_reimb", "_row_id"], errors="ignore")
+    return df.drop(
+        columns=["save_as_rule", "rule_keyword", "link_reimb", "bulk_select", "_row_id"],
+        errors="ignore",
+    )
 
 
 def merge_edited_subset_into_master(master_df, shown_row_ids, edited_subset_df):
