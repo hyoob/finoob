@@ -11,7 +11,8 @@ if ENV not in ["dev", "prod"]:
 
 # --- File Paths --- 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CATEGORIES_PATH = os.path.join(BASE_DIR, "config_data", "categories.json")
+CATEGORIES_PROD_PATH = os.path.join(BASE_DIR, "config_data", "categories.json")
+CATEGORIES_DEV_PATH = os.path.join(BASE_DIR, "config_data", "categories_dev.json")
 CATEGORIES_TEMPLATE_PATH = os.path.join(BASE_DIR, "config_data", "categories_example.json")
 ACCOUNTS_PROD_PATH = os.path.join(BASE_DIR, "config_data", "accounts.json")
 ACCOUNTS_DEV_PATH = os.path.join(BASE_DIR, "config_data", "accounts_dev.json")
@@ -28,13 +29,15 @@ MORTGAGE_SCHEDULE_VIEW_ID = f"{BQ_PROJECT_ID}.liabilities.view_mortgage_full_sch
 STOCKS_TABLE_ID = f"{BQ_PROJECT_ID}.assets.stocks"
 STOCK_TICKER = "GOOG"
 
-# Select accounts path based on environment
+# Select accounts and categories paths based on environment
 if ENV == "dev":
     ACCOUNTS_PATH = ACCOUNTS_DEV_PATH
+    CATEGORIES_PATH = CATEGORIES_DEV_PATH
     # Optional: Print a warning so you know you are in dev mode
     print("⚠️  [CONFIG] Running in DEV mode")
 else:
     ACCOUNTS_PATH = ACCOUNTS_PROD_PATH
+    CATEGORIES_PATH = CATEGORIES_PROD_PATH
 
 def get_categories_path():
     if os.path.exists(CATEGORIES_PATH):
@@ -66,8 +69,10 @@ def ensure_data_files_exist():
 
     # 2. Check Categories
     if not os.path.exists(CATEGORIES_PATH):
-        print(f"⚠️ {CATEGORIES_PATH} not found. Creating from template...")
-        if os.path.exists(CATEGORIES_TEMPLATE_PATH):
+        print(f"⚠️ {CATEGORIES_PATH} not found. Initializing...")
+        if ENV == "dev" and os.path.exists(CATEGORIES_PROD_PATH):
+            shutil.copy(CATEGORIES_PROD_PATH, CATEGORIES_PATH)
+        elif os.path.exists(CATEGORIES_TEMPLATE_PATH):
             shutil.copy(CATEGORIES_TEMPLATE_PATH, CATEGORIES_PATH)
         else:
             # Fallback: Create empty valid JSON

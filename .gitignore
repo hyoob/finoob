@@ -11,8 +11,9 @@ __pycache__/
 # Google Cloud credentials
 finoob-3e6282c0d80c.json
 
-# Categories prod file
+# Categories files
 config_data/categories.json
+config_data/categories_dev.json
 
 # Ignore sensitive financial data
 config_data/accounts.json

@@ -450,11 +450,80 @@ def reset_dev_sandbox_from_prod():
     local_storage.save_data(config.ACCOUNTS_PROD_PATH, prod_accs)
     local_storage.save_data(config.ACCOUNTS_DEV_PATH, prod_accs)
 
+    prod_cats = local_storage.load_json_data(config.CATEGORIES_PROD_PATH)
+    if prod_cats:
+        local_storage.save_data(config.CATEGORIES_DEV_PATH, prod_cats)
+
     prod_tbl = st.secrets["bigquery_table"]["prod"]
     dev_tbl = st.secrets["bigquery_table"]["dev"]
     client = db_client.get_client()
     query = f"CREATE OR REPLACE TABLE `{dev_tbl}` AS SELECT * FROM `{prod_tbl}`"
     client.query(query).result()
     return True
+
+
+def rewind_dev_sandbox_transactions(count=100):
+    """
+    Removes the most recent `count` transactions (by date DESC, transaction_number DESC)
+    from the dev BigQuery table (`sample_transactions`), unlinks any expenses whose
+    reimbursements were among the removed rows, and syncs `accounts_dev.json` balances
+    to the new latest transaction per account.
+    Only permitted when config.ENV == 'dev'.
+    """
+    import streamlit as st
+
+    if config.ENV != "dev":
+        raise RuntimeError("rewind_dev_sandbox_transactions can only be run in DEV mode.")
+
+    dev_tbl = st.secrets["bigquery_table"]["dev"]
+    client = db_client.get_client()
+    n = int(count)
+
+    # 1. If any of the last `n` rows are linked reimbursement credits, restore the target expenses first
+    restore_expenses_sql = f"""
+        UPDATE `{dev_tbl}` E
+        SET
+            debit = COALESCE(E.original_debit, E.debit),
+            original_debit = NULL,
+            reimbursement = NULL
+        WHERE E.transaction_id IN (
+            SELECT reimbursement.to_transaction_id
+            FROM (
+                SELECT reimbursement
+                FROM `{dev_tbl}`
+                ORDER BY date DESC, transaction_number DESC
+                LIMIT {n}
+            )
+            WHERE reimbursement.to_transaction_id IS NOT NULL
+        )
+    """
+    client.query(restore_expenses_sql).result()
+
+    # 2. Replace dev table excluding the most recent `n` rows
+    delete_sql = f"""
+        CREATE OR REPLACE TABLE `{dev_tbl}` AS
+        SELECT * EXCEPT(_rn)
+        FROM (
+            SELECT
+                *,
+                ROW_NUMBER() OVER (ORDER BY date DESC, transaction_number DESC) AS _rn
+            FROM `{dev_tbl}`
+        )
+        WHERE _rn > {n}
+    """
+    client.query(delete_sql).result()
+
+    # 3. Sync accounts_dev.json balances to the new latest transaction balance per account
+    latest_rows = db_client.run_query(queries.get_all_accounts_latest_balance_query(dev_tbl))
+    dev_accs = local_storage.load_json_data(config.ACCOUNTS_DEV_PATH)
+    for row in (latest_rows or []):
+        aid = row.get("account_id")
+        bal = row.get("balance")
+        if aid in dev_accs and bal is not None:
+            dev_accs[aid]["balance"] = round(float(bal), 2)
+    local_storage.save_data(config.ACCOUNTS_DEV_PATH, dev_accs)
+
+    return n
+
 
 

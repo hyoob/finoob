@@ -35,22 +35,40 @@ ui.init_page("Import")
 # loads all data variables
 categories, category_options, account_map, table_id = app_service.load_global_context()
 
-hdr_col1, hdr_col2 = st.columns([3, 1])
+hdr_col1, hdr_col2, hdr_col3 = st.columns([2.1, 1.05, 1.05])
 hdr_col1.header("📥 Import New Transactions")
 hdr_col1.caption(f"Target BigQuery Table: `{table_id}`")
 if config.ENV == "dev":
     hdr_col2.write("")
     if hdr_col2.button(
+        "⏪ Remove Last 100 Dev Txs",
+        help="Deletes the 100 most recent transactions from sample_transactions (and rewinds accounts_dev.json balances) so you can test the Import workflow.",
+        use_container_width=True,
+        key="rewind_dev_sandbox_btn",
+    ):
+        with st.spinner("Removing last 100 transactions from dev sandbox..."):
+            removed_cnt = ingestion_service.rewind_dev_sandbox_transactions(count=100)
+            st.session_state.pop("multi_api_sync_result", None)
+            st.cache_data.clear()
+            st.session_state.pending_rule_toast = (
+                f"⏪ Removed the last {removed_cnt} transactions from `sample_transactions`!"
+            )
+        st.rerun()
+
+    hdr_col3.write("")
+    if hdr_col3.button(
         "🔄 Reset Dev Sandbox from Prod",
-        help="Copies prod transactions table -> sample_transactions and accounts.json -> accounts_dev.json",
+        help="Copies prod transactions table -> sample_transactions, accounts.json -> accounts_dev.json, and categories.json -> categories_dev.json",
         use_container_width=True,
         key="reset_dev_sandbox_btn",
     ):
-        with st.spinner("Cloning prod table & accounts into dev sandbox..."):
+        with st.spinner("Cloning prod table, accounts & categories into dev sandbox..."):
             ingestion_service.reset_dev_sandbox_from_prod()
             st.session_state.pop("multi_api_sync_result", None)
             st.cache_data.clear()
-        st.success("✅ Dev sandbox (`sample_transactions` & `accounts_dev.json`) reset from `prod`!")
+            st.session_state.pending_rule_toast = (
+                "✅ Dev sandbox (`sample_transactions`, `accounts_dev.json` & `categories_dev.json`) reset from `prod`!"
+            )
         st.rerun()
 
 
@@ -195,6 +213,198 @@ def _inject_draggable_resizable_dialog():
                 resizeSide = null;
             });
         })();
+        </script>
+        """,
+        height=0,
+    )
+    _inject_scroll_preserver(nonce="dialog_open")
+
+
+def _inject_scroll_preserver(nonce=""):
+    """
+    Preserves and restores both the page scroll (stMain) and the Glide Data Grid internal
+    table scroll (.dvn-scroller + canvas repaint) across modal openings/closings and
+    editor_rev remounts so adding a rule, bulk categorizing, or linking a reimbursement
+    never jumps back to the top.
+    """
+    st.components.v1.html(
+        f"""
+        <!-- scroll_preserver_nonce: {nonce} -->
+        <script>
+        (function() {{
+            const win = window.parent;
+            const doc = win.document;
+
+            win.__finoobGridScrollByIdx = win.__finoobGridScrollByIdx || {{}};
+            if (typeof win.__finoobMainScrollTop !== "number") {{
+                win.__finoobMainScrollTop = 0;
+            }}
+            if (typeof win.__finoobLastUserScrollInputTs !== "number") {{
+                win.__finoobLastUserScrollInputTs = 0;
+            }}
+
+            function getMainScroller() {{
+                return doc.querySelector('section[data-testid="stMain"]') || doc.scrollingElement || doc.documentElement;
+            }}
+
+            function getPageGridScrollers() {{
+                const all = Array.from(doc.querySelectorAll('.dvn-scroller'));
+                return all.filter(function(el) {{
+                    return !el.closest('div[data-testid="stDialog"]');
+                }});
+            }}
+
+            // Snapshot any currently scrolled grids right now (e.g. when dialog opens)
+            getPageGridScrollers().forEach(function(el, idx) {{
+                if (el.scrollTop > 0 || el.scrollLeft > 0) {{
+                    win.__finoobGridScrollByIdx[idx] = {{
+                        top: el.scrollTop,
+                        left: el.scrollLeft
+                    }};
+                }}
+            }});
+            const curMain = getMainScroller();
+            if (curMain && curMain.scrollTop > 0) {{
+                win.__finoobMainScrollTop = curMain.scrollTop;
+            }}
+
+            // 1. Install global listeners once per browser tab
+            if (!win.__finoobScrollListenerInstalled) {{
+                win.__finoobScrollListenerInstalled = true;
+
+                const markUserScrollInput = function(e) {{
+                    if (e && e.target && e.target.closest && e.target.closest('div[data-testid="stDialog"]')) {{
+                        return;
+                    }}
+                    win.__finoobLastUserScrollInputTs = Date.now();
+                }};
+                doc.addEventListener("wheel", markUserScrollInput, {{ capture: true, passive: true }});
+                doc.addEventListener("touchmove", markUserScrollInput, {{ capture: true, passive: true }});
+                doc.addEventListener("mousedown", markUserScrollInput, true);
+                doc.addEventListener("keydown", markUserScrollInput, true);
+
+                doc.addEventListener("scroll", function(e) {{
+                    const t = e.target;
+                    if (!t || t === doc) return;
+
+                    const isUserInitiated = (Date.now() - (win.__finoobLastUserScrollInputTs || 0)) < 600;
+                    const dialogOpen = !!doc.querySelector('div[data-testid="stDialog"]');
+
+                    if (t.classList && t.classList.contains("dvn-scroller")) {{
+                        if (t.closest('div[data-testid="stDialog"]')) return;
+                        if (t.dataset.finoobRestoring === "true") return;
+                        const grids = getPageGridScrollers();
+                        const idx = grids.indexOf(t);
+                        if (idx !== -1) {{
+                            const prev = win.__finoobGridScrollByIdx[idx];
+                            // Never let a programmatic reset to 0 overwrite a saved scroll position;
+                            // instead immediately restore the saved scroll position!
+                            if (t.scrollTop === 0 && prev && prev.top > 0 && (!isUserInitiated || dialogOpen)) {{
+                                restoreGridScroll(t, idx);
+                                return;
+                            }}
+                            win.__finoobGridScrollByIdx[idx] = {{
+                                top: t.scrollTop,
+                                left: t.scrollLeft
+                            }};
+                        }}
+                    }} else if (
+                        (t.getAttribute && t.getAttribute("data-testid") === "stMain") ||
+                        t === doc.scrollingElement ||
+                        t === doc.documentElement
+                    ) {{
+                        if (t.dataset && t.dataset.finoobRestoring === "true") return;
+                        if (t.scrollTop === 0 && win.__finoobMainScrollTop > 0 && (!isUserInitiated || dialogOpen)) {{
+                            t.scrollTop = win.__finoobMainScrollTop;
+                            return;
+                        }}
+                        win.__finoobMainScrollTop = t.scrollTop;
+                    }}
+                }}, true);
+            }}
+
+            // 2. Restore scroll on any newly mounted .dvn-scroller (and trigger Glide Data Grid canvas repaint)
+            function restoreGridScroll(el, idx) {{
+                const saved = win.__finoobGridScrollByIdx[idx];
+                const mainEl = getMainScroller();
+                const savedMainTop = win.__finoobMainScrollTop || 0;
+
+                if ((!saved || !(saved.top > 0 || saved.left > 0)) && !(savedMainTop > 0)) {{
+                    return;
+                }}
+
+                el.dataset.finoobRestoring = "true";
+                if (mainEl && mainEl.dataset) mainEl.dataset.finoobRestoring = "true";
+
+                let attempts = 0;
+                let stableHits = 0;
+                const maxAttempts = 40; // up to ~1000ms
+                const timer = win.setInterval(function() {{
+                    attempts += 1;
+                    let gridDone = true;
+
+                    if (saved && (saved.top > 0 || saved.left > 0)) {{
+                        if (el.scrollHeight > el.clientHeight + 5 || saved.left > 0) {{
+                            if (Math.abs(el.scrollTop - saved.top) > 2 || Math.abs(el.scrollLeft - saved.left) > 2) {{
+                                el.scrollTop = saved.top;
+                                el.scrollLeft = saved.left;
+                                el.dispatchEvent(new win.Event("scroll", {{ bubbles: true }}));
+                                gridDone = false;
+                            }}
+                        }} else {{
+                            gridDone = false;
+                        }}
+                    }}
+
+                    if (mainEl && savedMainTop > 0 && Math.abs(mainEl.scrollTop - savedMainTop) > 4) {{
+                        mainEl.scrollTop = savedMainTop;
+                    }}
+
+                    if (gridDone) {{
+                        stableHits += 1;
+                    }} else {{
+                        stableHits = 0;
+                    }}
+
+                    if (stableHits >= 4 || attempts >= maxAttempts) {{
+                        win.clearInterval(timer);
+                        el.dataset.finoobRestoring = "false";
+                        if (mainEl && mainEl.dataset) mainEl.dataset.finoobRestoring = "false";
+                    }}
+                }}, 25);
+            }}
+
+            function checkAndRestoreGrids(forceAll) {{
+                const grids = getPageGridScrollers();
+                grids.forEach(function(el, idx) {{
+                    if (!forceAll && el.dataset.finoobScrollInitialized === "true") return;
+                    el.dataset.finoobScrollInitialized = "true";
+                    restoreGridScroll(el, idx);
+                }});
+            }}
+
+            const curNonce = "{nonce}";
+            const forceRestore = (curNonce && curNonce !== "dialog_open" && curNonce !== win.__finoobLastScrollNonce);
+            if (curNonce && curNonce !== "dialog_open") {{
+                win.__finoobLastScrollNonce = curNonce;
+            }}
+            checkAndRestoreGrids(forceRestore);
+            if (forceRestore) {{
+                [60, 150, 300, 500].forEach(function(delayMs) {{
+                    win.setTimeout(function() {{
+                        checkAndRestoreGrids(true);
+                    }}, delayMs);
+                }});
+            }}
+
+            if (!win.__finoobScrollObserverInstalled) {{
+                win.__finoobScrollObserverInstalled = true;
+                const obs = new win.MutationObserver(function() {{
+                    checkAndRestoreGrids(false);
+                }});
+                obs.observe(doc.body, {{ childList: true, subtree: true }});
+            }}
+        }})();
         </script>
         """,
         height=0,
@@ -652,6 +862,23 @@ def _open_reimb_dialog_on_tick(
             key=f"{key_prefix}_reimb_credits_editor_{target_rid}",
         )
         selected_credits = edited_credits_df[edited_credits_df["include"] == True].copy()
+        sel_credit_cnt = len(selected_credits)
+        sel_credit_total = (
+            round(float(selected_credits["credit"].sum()), 2)
+            if not selected_credits.empty
+            else 0.0
+        )
+        if sel_credit_cnt == 0:
+            st.warning("⚠️ Tick at least one credit transaction above.")
+        elif sel_credit_cnt == 1:
+            st.markdown(
+                f"✅ **1 credit selected** — Total Reimbursement: **:green[+{sel_credit_total:,.2f} €]**"
+            )
+        else:
+            parts_str = " + ".join(f"{float(v):,.2f} €" for v in selected_credits["credit"].tolist())
+            st.markdown(
+                f"✅ **{sel_credit_cnt} credits selected** — Total Reimbursement: **:green[+{sel_credit_total:,.2f} €]** &nbsp;`({parts_str})`"
+            )
 
         # --- 2. Build candidate expense rows (Current Batch + Saved in BigQuery) ---
         st.markdown("##### 2. Select Original Expense")
@@ -1070,6 +1297,7 @@ def _render_single_account_editor_and_save(new_transactions, warning, latest_bq_
             default_account_id=account_id,
         )
         _render_staged_reimbursements_summary(staged_reimb_key)
+        _inject_scroll_preserver(nonce=f"single_{account_id}_{cur_rev}_{sort_mode}_{show_only_uncat}")
         ctx_key = f"recon_ctx_{account_id}_{table_id}"
         if ctx_key not in st.session_state:
             st.session_state[ctx_key] = ingestion_service.get_reconciliation_context(account_id, table_id)
@@ -1604,6 +1832,7 @@ if tab_sync is not None:
                                 on_cancel_reimb=_cancel_multi_rule,
                             )
                             _render_staged_reimbursements_summary(staged_reimb_multi_key)
+                            _inject_scroll_preserver(nonce=f"multi_{run_id}_{editor_rev}_{sort_mode}_{show_only_uncat}")
 
                             # Live re-validation per included account in case amounts/rows were edited in the table
                             editor_issues = []
