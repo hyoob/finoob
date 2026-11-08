@@ -141,3 +141,88 @@ def calculate_snapshot_metrics(sim_df, events_df, default_payment):
             "monthly_overpayment": current_overpayment
         }
     return None
+
+
+def calculate_official_mortgage_kpis(terms_df, schedule_df):
+    """
+    Computes live summary KPIs for the official mortgage from dim_mortgage_terms
+    and view_mortgage_full_schedule.
+    """
+    start_balance = 0.0
+    initial_rate = 0.0
+    initial_payment = 0.0
+    current_rate = 0.0
+    current_payment = 0.0
+    today_dt = pd.Timestamp.today().normalize()
+
+    if terms_df is not None and not terms_df.empty:
+        row = terms_df.iloc[0]
+        start_balance = float(row.get("start_balance") or 0.0)
+        initial_rate = float(row.get("interest_rate_pct") or 0.0)
+        initial_payment = float(row.get("monthly_payment") or 0.0)
+        current_rate = initial_rate
+        current_payment = initial_payment
+
+        raw_events = row.get("events")
+        if raw_events is not None and len(raw_events) > 0:
+            ev_df = pd.DataFrame(list(raw_events))
+            if not ev_df.empty and "date" in ev_df.columns:
+                ev_df["_dt"] = pd.to_datetime(ev_df["date"], errors="coerce")
+                ev_df = ev_df.dropna(subset=["_dt"]).sort_values("_dt")
+                for _, ev in ev_df.iterrows():
+                    if ev["_dt"] <= today_dt:
+                        etype = str(ev.get("event_type") or "")
+                        val = float(ev.get("value") or 0.0)
+                        if etype == "New Interest Rate" and val > 0:
+                            current_rate = val
+                        elif etype == "New Monthly Payment" and val > 0:
+                            current_payment = val
+
+    current_balance = start_balance
+    principal_paid = 0.0
+    interest_paid = 0.0
+    as_of_month = "—"
+    payoff_date_str = "—"
+    remaining_years = 0.0
+    total_projected_interest = 0.0
+
+    if schedule_df is not None and not schedule_df.empty:
+        sched = schedule_df.copy()
+        sched["_month_dt"] = pd.to_datetime(sched["month"], errors="coerce")
+        sched = sched.dropna(subset=["_month_dt"]).sort_values("_month_dt").reset_index(drop=True)
+
+        if not sched.empty:
+            actual_rows = sched[sched.get("status", pd.Series(dtype=str)) == "Actual"] if "status" in sched.columns else pd.DataFrame()
+            past_rows = sched[sched["_month_dt"] <= today_dt]
+            ref_rows = actual_rows if not actual_rows.empty else (past_rows if not past_rows.empty else sched.iloc[:1])
+            latest_row = ref_rows.iloc[-1]
+
+            current_balance = round(abs(float(latest_row.get("balance") or 0.0)), 2)
+            principal_paid = round(float(latest_row.get("cumulative_principal") or 0.0), 2)
+            interest_paid = round(float(latest_row.get("cumulative_interest") or 0.0), 2)
+            as_of_month = latest_row["_month_dt"].strftime("%Y-%m")
+
+            last_row = sched.iloc[-1]
+            payoff_date_str = last_row["_month_dt"].strftime("%Y-%m")
+            total_projected_interest = round(float(last_row.get("cumulative_interest") or 0.0), 2)
+
+            future_rows = sched[sched["_month_dt"] > latest_row["_month_dt"]]
+            remaining_years = round(len(future_rows) / 12.0, 1)
+
+    repaid_pct = round(((start_balance - current_balance) / start_balance) * 100.0, 1) if start_balance > 0 else 0.0
+
+    return {
+        "start_balance": start_balance,
+        "current_balance": current_balance,
+        "repaid_pct": repaid_pct,
+        "principal_paid": principal_paid,
+        "interest_paid": interest_paid,
+        "as_of_month": as_of_month,
+        "initial_rate": initial_rate,
+        "current_rate": current_rate,
+        "initial_payment": initial_payment,
+        "current_payment": current_payment,
+        "payoff_date": payoff_date_str,
+        "remaining_years": remaining_years,
+        "total_projected_interest": total_projected_interest,
+    }

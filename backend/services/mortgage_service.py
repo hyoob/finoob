@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import streamlit as st
 from backend.infrastructure import db_client, queries
 
 def get_mortgage_terms(table_id):
@@ -16,23 +17,35 @@ def get_mortgage_terms(table_id):
     return df
 
 def save_mortgage_terms(table_id, terms_df, events_df=None):
-    """Wrapper to save mortgage updates."""
+    """Wrapper to save mortgage updates and refresh Net Worth."""
     df_to_save = terms_df.copy()
     
     # Nest events into the dataframe if provided
-    if events_df is not None and not events_df.empty and not df_to_save.empty:
-        # Convert events DF to list of dicts and ensure date objects
-        events_data = events_df.copy()
-        events_data['date'] = pd.to_datetime(events_data['date']).dt.date
-        events_list = events_data.to_dict('records')
-        
-        # Assign to the first mortgage (assuming single mortgage context for now)
-        df_to_save['events'] = df_to_save['events'].astype('object')
-        df_to_save.at[0, 'events'] = events_list
-    elif 'events' not in df_to_save.columns:
-         df_to_save['events'] = None 
+    if events_df is not None and not df_to_save.empty:
+        events_data = events_df.dropna(subset=["date", "event_type", "value"]).copy()
+        if not events_data.empty:
+            events_data["date"] = pd.to_datetime(events_data["date"], errors="coerce").dt.date
+            events_data["value"] = pd.to_numeric(events_data["value"], errors="coerce").astype(float)
+            events_data = events_data.dropna(subset=["date", "value"]).sort_values("date")
+            events_list = events_data[["date", "event_type", "value"]].to_dict("records")
+        else:
+            events_list = []
 
-    return db_client.save_mortgage_updates(table_id, df_to_save)
+        df_to_save["events"] = df_to_save["events"].astype("object") if "events" in df_to_save.columns else None
+        df_to_save.at[0, "events"] = events_list
+    elif "events" not in df_to_save.columns:
+        df_to_save["events"] = None
+
+    ok, msg = db_client.save_mortgage_updates(table_id, df_to_save)
+    if not ok:
+        return False, msg
+
+    nw_ok, nw_err = db_client.update_net_worth_table()
+    st.cache_data.clear()
+    if not nw_ok:
+        return False, f"{msg} (Warning: Net Worth refresh failed: {nw_err})"
+
+    return True, f"🎉 {msg} Net Worth table refreshed!"
 
 def get_mortgage_schedule(table_id):
     """Fetches the amortization schedule."""

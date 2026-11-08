@@ -354,7 +354,7 @@ def render_mortgage_schedule(schedule_df):
     df = schedule_df.copy()
     df["month"] = pd.to_datetime(df["month"])
     
-    tab1, tab2 = st.tabs(["Chart", "Data"])
+    tab1, tab2 = st.tabs(["📈 Balance Chart", "📋 Monthly Schedule Data"])
     
     with tab1:
         st.line_chart(df, x="month", y="balance")
@@ -369,6 +369,7 @@ def render_mortgage_schedule(schedule_df):
 
         st.dataframe(
             df.style.format(format_dict),
+            use_container_width=True,
             hide_index=True,
             column_config={
                 "month": st.column_config.DateColumn("Month", format="YYYY-MM")
@@ -392,8 +393,8 @@ def render_simulation_metrics(metrics):
     """Renders the summary KPIs for the mortgage simulation."""
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Total Interest Payable", f"€{metrics['total_interest']:,.2f}")
-    k2.metric("Interest Saved", f"€{metrics['interest_saved']:,.2f}", delta=f"{metrics['interest_saved']:,.2f}", delta_color="normal")
-    k3.metric("Duration", f"{metrics['years_duration']:.1f} Years")
+    k2.metric("Interest Saved vs. Baseline", f"€{metrics['interest_saved']:,.2f}", delta=f"{metrics['interest_saved']:,.2f} €", delta_color="normal")
+    k3.metric("Total Duration", f"{metrics['years_duration']:.1f} Years")
     k4.metric("Projected Payoff Date", metrics['payoff_date'].strftime("%Y-%m-%d"))
 
 def render_simulation_snapshot(snapshot):
@@ -406,8 +407,17 @@ def render_simulation_snapshot(snapshot):
         m2.metric("Principal Paid", f"€{snapshot['cumulative_principal']:,.2f}")
         m3.metric("Monthly Overpayment", f"€{snapshot['monthly_overpayment']:,.2f}")
 
-def render_simulation_inputs(defaults):
+def render_simulation_inputs(defaults, include_extra_payment=False):
     """Renders the input form for the mortgage simulator."""
+    if include_extra_payment:
+        c1, c2, c3, c4, c5 = st.columns(5)
+        sim_balance = c1.number_input("Start Balance (€)", value=defaults["balance"], step=1000.0, format="%.2f", key="sim_input_balance")
+        sim_rate = c2.number_input("Interest Rate (%)", value=defaults["rate"], step=0.1, format="%.2f", key="sim_input_rate")
+        sim_payment = c3.number_input("Monthly Payment (€)", value=defaults["payment"], step=50.0, format="%.2f", key="sim_input_payment")
+        sim_extra = c4.number_input("Recurring Extra / Mo (€)", value=0.0, min_value=0.0, step=50.0, format="%.2f", key="sim_input_extra")
+        sim_start_date = c5.date_input("Start Date", value=defaults["start_date"], key="sim_input_start_date")
+        return sim_balance, sim_rate, sim_payment, sim_extra, sim_start_date
+
     c1, c2, c3, c4 = st.columns(4)
     sim_balance = c1.number_input("Start Balance (€)", value=defaults["balance"], step=1000.0, format="%.2f")
     sim_rate = c2.number_input("Interest Rate (%)", value=defaults["rate"], step=0.1, format="%.2f")
