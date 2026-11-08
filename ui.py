@@ -240,11 +240,12 @@ def get_accounts_table_config():
     return {
         "account_name": st.column_config.TextColumn("Account Name", width="medium"),
         "bank": st.column_config.TextColumn("Bank", width="small"),
+        "account_type": st.column_config.TextColumn("Type", width="small"),
         "balance": st.column_config.NumberColumn(
-            "Balance",
+            "Balance (BQ)",
             width="small"
         ),
-        "last_updated": st.column_config.TextColumn("Last Updated", width="medium"),
+        "last_updated": st.column_config.TextColumn("Latest Tx Date", width="medium"),
         "open_banking_status": st.column_config.TextColumn("Open Banking", width="small"),
         "consent_expiry": st.column_config.TextColumn("Link Refresh Needed", width="medium"),
         "account_id": None  # Hide ID
@@ -864,6 +865,60 @@ def get_property_assets_editor_config():
             required=True,
             width="medium",
         ),
+    }
+
+
+def get_accounts_editor_config():
+    """Returns column configuration for editing finoob.accounts.dim_accounts."""
+    return {
+        "account_id": st.column_config.TextColumn(
+            "Canonical ID (account_id)",
+            help="Immutable ID linking to transactions.account_id (e.g. acc_01, acc_11, revolut_joint). Do not change for existing accounts.",
+            required=True,
+            width="small",
+        ),
+        "account_name": st.column_config.TextColumn(
+            "Display Name",
+            help="Human-readable account name shown across the UI and Net Worth (can be renamed anytime without touching historical transactions).",
+            required=True,
+            width="medium",
+        ),
+        "bank": st.column_config.SelectboxColumn(
+            "Bank / Parser",
+            help="Must match an existing parser in PARSER_REGISTRY ('ptsb', 'revolut', 'cmb', 'usbank').",
+            options=["ptsb", "revolut", "cmb", "usbank"],
+            required=True,
+            width="small",
+        ),
+        "account_type": st.column_config.SelectboxColumn(
+            "Wealth Category",
+            help="How this account is classified in Net Worth ('Cash' or 'Savings').",
+            options=["Cash", "Savings"],
+            required=True,
+            width="small",
+        ),
+        "active": st.column_config.CheckboxColumn(
+            "Active",
+            help="Uncheck to archive the account (hides it from Import/Backfill dropdowns).",
+            default=True,
+            width="small",
+        ),
+        "enable_banking_iban": st.column_config.TextColumn(
+            "Open Banking IBAN",
+            help="Optional IBAN linked via Enable Banking.",
+            width="medium",
+        ),
+        "enable_banking_uid": st.column_config.TextColumn(
+            "Open Banking UID",
+            help="Optional Enable Banking account UID (managed automatically when linking on Import page).",
+            width="medium",
+        ),
+        "enable_banking_valid_until": st.column_config.DatetimeColumn(
+            "Consent Valid Until",
+            format="YYYY-MM-DD HH:mm",
+            width="medium",
+        ),
+        "updated_at": None,
     }
 
 

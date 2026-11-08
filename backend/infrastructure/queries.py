@@ -29,7 +29,58 @@ def get_all_accounts_latest_balance_query(table_id):
             balance,
             transaction_number
         FROM `{table_id}`
+        WHERE COALESCE(transaction_type, '') != 'Info'
         QUALIFY ROW_NUMBER() OVER (PARTITION BY account_id ORDER BY transaction_number DESC, date DESC) = 1
+    """
+
+
+def get_dim_accounts_query(accounts_table_id):
+    return f"""
+        SELECT
+            account_id,
+            account_name,
+            bank,
+            account_type,
+            active,
+            enable_banking_uid,
+            enable_banking_iban,
+            enable_banking_valid_until,
+            updated_at
+        FROM `{accounts_table_id}`
+        ORDER BY active DESC, account_name ASC, account_id ASC
+    """
+
+
+def get_accounts_with_latest_balances_query(accounts_table_id, tx_table_id):
+    return f"""
+        WITH latest_tx AS (
+            SELECT
+                account_id,
+                date AS last_tx_date,
+                balance AS latest_balance,
+                transaction_number
+            FROM `{tx_table_id}`
+            WHERE COALESCE(transaction_type, '') != 'Info'
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY account_id ORDER BY transaction_number DESC, date DESC) = 1
+        )
+        SELECT
+            a.account_id,
+            a.account_name,
+            a.bank,
+            a.account_type,
+            a.active,
+            a.enable_banking_uid,
+            a.enable_banking_iban,
+            a.enable_banking_valid_until,
+            a.updated_at,
+            COALESCE(t.latest_balance, 0.0) AS balance,
+            t.last_tx_date AS last_updated,
+            t.latest_balance AS bq_balance,
+            t.last_tx_date AS last_bq_date
+        FROM `{accounts_table_id}` a
+        LEFT JOIN latest_tx t
+            ON a.account_id = t.account_id
+        ORDER BY a.active DESC, a.account_name ASC, a.account_id ASC
     """
 
 def get_max_transaction_id_query(table_id, account_id):

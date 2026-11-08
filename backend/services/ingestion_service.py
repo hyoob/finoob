@@ -34,7 +34,7 @@ def _deduplicate_and_categorize(df, table_id, account_id, category_data):
 def process_transaction_upload(account_id, table_id, uploaded_file, category_data):
     """Facade 1: Handles the READ workflow (File -> DB Check -> New Data)."""
 
-    account_data = local_storage.load_json_data(config.ACCOUNTS_PATH)
+    account_data = accounts_service.get_accounts_dict(tx_table_id=table_id)
 
     bank = account_logic.get_bank_from_account(account_data, account_id)
 
@@ -62,7 +62,7 @@ def process_api_transaction_sync(account_id, table_id, category_data, lookback_d
     normalizes them, deduplicates against BigQuery, and auto-categorizes new rows.
     Returns (new_transactions, warning, latest_bq_date, raw_normalized_df).
     """
-    account_data = local_storage.load_json_data(config.ACCOUNTS_PATH)
+    account_data = accounts_service.get_accounts_dict(tx_table_id=table_id)
     account_uid = account_logic.get_enable_banking_uid(account_data, account_id)
     if not account_uid:
         raise ValueError(f"Account '{account_id}' is not linked to an Enable Banking account UID yet.")
@@ -160,9 +160,9 @@ def save_transactions_workflow(table_id, account_id, edited_df, staged_reimb_lin
     """
     Facade 2: Handles the WRITE workflow.
     Takes the dataframe from the UI, enriches it, saves to BQ, applies any staged reimbursement links,
-    updates net worth and updates the account's closing balance.
+    and updates net worth.
     """
-    account_data = local_storage.load_json_data(config.ACCOUNTS_PATH)
+    account_data = accounts_service.get_accounts_dict(tx_table_id=table_id)
 
     # Auto-save any checked inline categorization rules before stripping UI rule columns
     checked_rules, _ = categorization_logic.extract_checked_rules_from_df(edited_df)
@@ -197,13 +197,6 @@ def save_transactions_workflow(table_id, account_id, edited_df, staged_reimb_lin
     row_id_map = _build_row_id_map(work_df)
     clean_df = categorization_logic.strip_rule_columns(work_df)
 
-    # Determine closing balance from the last row
-    valid_rows = clean_df[clean_df["transaction_type"] != "Info"]
-    if not valid_rows.empty:
-        closing_balance = float(valid_rows.iloc[-1]["balance"])
-    else:
-        closing_balance = None
-
     # Load into BigQuery
     db_client.insert_transactions(table_id, clean_df)
 
@@ -213,13 +206,7 @@ def save_transactions_workflow(table_id, account_id, edited_df, staged_reimb_lin
 
     # Update the net worth table
     update_success, error_msg = db_client.update_net_worth_table() 
-
-    balance_update_success = False
-    if closing_balance is not None:
-        balance_update_success = accounts_service.update_account_balance(account_id, closing_balance)
-        print(f"Set balance to {closing_balance} for {account_id}")
-        if not balance_update_success:
-            print(f"Warning: Transactions saved, but account balance update failed for {account_id}")
+    accounts_service._fetch_accounts_with_balances_cached.clear()
 
     return len(clean_df), update_success, error_msg
 
@@ -232,7 +219,7 @@ def get_reconciliation_context(account_id, table_id):
     rows = db_client.run_query(queries.get_latest_transaction_query(table_id, account_id))
     latest_bq_tx = rows[0] if rows else None
 
-    account_data = local_storage.load_json_data(config.ACCOUNTS_PATH)
+    account_data = accounts_service.get_accounts_dict(tx_table_id=table_id)
     account_uid = account_logic.get_enable_banking_uid(account_data, account_id)
 
     live_bank_balance = None
@@ -272,7 +259,7 @@ def process_multi_account_api_sync(
     across multiple accounts in one batch.
     Returns dict {account_id: {...account sync & validation result...}}.
     """
-    account_data = local_storage.load_json_data(config.ACCOUNTS_PATH)
+    account_data = accounts_service.get_accounts_dict(tx_table_id=table_id)
     results = {}
     total = len(account_ids)
 
@@ -371,9 +358,8 @@ def save_multi_account_transactions_workflow(table_id, combined_edited_df, stage
         rules_service.add_rules_batch(checked_rules)
     work_df = combined_edited_df.copy()
 
-    account_data = local_storage.load_json_data(config.ACCOUNTS_PATH)
+    account_data = accounts_service.get_accounts_dict(tx_table_id=table_id)
     enriched_batches = []
-    closing_balances = {}
 
     for acc_id, group_df in work_df.groupby("account_id", sort=False):
         if group_df.empty:
@@ -394,10 +380,6 @@ def save_multi_account_transactions_workflow(table_id, combined_edited_df, stage
         acc_df["transaction_number"] = range(start_num + 1, start_num + 1 + len(acc_df))
         acc_df["transaction_id"] = acc_df["account_id"] + ":" + acc_df["transaction_number"].astype(str)
 
-        valid_rows = acc_df[acc_df["transaction_type"] != "Info"]
-        if not valid_rows.empty:
-            closing_balances[acc_id] = float(valid_rows.iloc[-1]["balance"])
-
         enriched_batches.append(acc_df)
 
     if not enriched_batches:
@@ -416,13 +398,7 @@ def save_multi_account_transactions_workflow(table_id, combined_edited_df, stage
 
     # Refresh the net worth table once
     update_success, error_msg = db_client.update_net_worth_table()
-
-    # Update local account balances for each saved account
-    for acc_id, closing_bal in closing_balances.items():
-        balance_update_success = accounts_service.update_account_balance(acc_id, closing_bal)
-        print(f"Set balance to {closing_bal} for {acc_id}")
-        if not balance_update_success:
-            print(f"Warning: Transactions saved, but account balance update failed for {acc_id}")
+    accounts_service._fetch_accounts_with_balances_cached.clear()
 
     return len(final_df), len(enriched_batches), update_success, error_msg
 
@@ -430,25 +406,13 @@ def save_multi_account_transactions_workflow(table_id, combined_edited_df, stage
 def reset_dev_sandbox_from_prod():
     """
     Copies the production BigQuery transactions table into the dev sample_transactions
-    table and syncs accounts_dev.json from accounts.json (preserving any Open Banking UIDs).
+    table and syncs categories_dev.json from categories.json.
     Only permitted when config.ENV == 'dev'.
     """
     import streamlit as st
 
     if config.ENV != "dev":
         raise RuntimeError("reset_dev_sandbox_from_prod can only be run in DEV mode.")
-
-    prod_accs = local_storage.load_json_data(config.ACCOUNTS_PROD_PATH)
-    dev_accs = local_storage.load_json_data(config.ACCOUNTS_DEV_PATH)
-
-    for acc_id, d_info in dev_accs.items():
-        if acc_id in prod_accs:
-            for k in ("enable_banking_uid", "enable_banking_valid_until", "enable_banking_iban"):
-                if d_info.get(k) and not prod_accs[acc_id].get(k):
-                    prod_accs[acc_id][k] = d_info[k]
-
-    local_storage.save_data(config.ACCOUNTS_PROD_PATH, prod_accs)
-    local_storage.save_data(config.ACCOUNTS_DEV_PATH, prod_accs)
 
     prod_cats = local_storage.load_json_data(config.CATEGORIES_PROD_PATH)
     if prod_cats:
@@ -465,9 +429,8 @@ def reset_dev_sandbox_from_prod():
 def rewind_dev_sandbox_transactions(count=100):
     """
     Removes the most recent `count` transactions (by date DESC, transaction_number DESC)
-    from the dev BigQuery table (`sample_transactions`), unlinks any expenses whose
-    reimbursements were among the removed rows, and syncs `accounts_dev.json` balances
-    to the new latest transaction per account.
+    from the dev BigQuery table (`sample_transactions`) and unlinks any expenses whose
+    reimbursements were among the removed rows.
     Only permitted when config.ENV == 'dev'.
     """
     import streamlit as st
@@ -512,16 +475,6 @@ def rewind_dev_sandbox_transactions(count=100):
         WHERE _rn > {n}
     """
     client.query(delete_sql).result()
-
-    # 3. Sync accounts_dev.json balances to the new latest transaction balance per account
-    latest_rows = db_client.run_query(queries.get_all_accounts_latest_balance_query(dev_tbl))
-    dev_accs = local_storage.load_json_data(config.ACCOUNTS_DEV_PATH)
-    for row in (latest_rows or []):
-        aid = row.get("account_id")
-        bal = row.get("balance")
-        if aid in dev_accs and bal is not None:
-            dev_accs[aid]["balance"] = round(float(bal), 2)
-    local_storage.save_data(config.ACCOUNTS_DEV_PATH, dev_accs)
 
     return n
 

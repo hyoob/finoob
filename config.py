@@ -20,6 +20,7 @@ ACCOUNTS_TEMPLATE_PATH = os.path.join(BASE_DIR, "config_data", "accounts_example
 
 # --- BigQuery Configuration ---
 BQ_PROJECT_ID = st.secrets["gcp_service_account"]["project_id"]
+ACCOUNTS_TABLE_ID = f"{BQ_PROJECT_ID}.accounts.dim_accounts"
 NET_WORTH_DATASET_ID = "reporting"
 NET_WORTH_PROCEDURE = f"{BQ_PROJECT_ID}.{NET_WORTH_DATASET_ID}.sp_refresh_net_worth"
 NET_WORTH_TABLE_ID = f"{BQ_PROJECT_ID}.{NET_WORTH_DATASET_ID}.table_net_worth"
@@ -34,7 +35,7 @@ PENSION_RAW_TABLE_ID = f"{BQ_PROJECT_ID}.assets.raw_pension_gsheet"
 STOCKS_TABLE_ID = f"{BQ_PROJECT_ID}.assets.stocks"
 STOCK_TICKER = "GOOG"
 
-# Select accounts and categories paths based on environment
+# Select categories path based on environment
 if ENV == "dev":
     ACCOUNTS_PATH = ACCOUNTS_DEV_PATH
     CATEGORIES_PATH = CATEGORIES_DEV_PATH
@@ -60,19 +61,8 @@ def get_table_id():
 
 def ensure_data_files_exist():
     """
-    Checks if sensitive files exist. If not, creates them from templates.
+    Checks if local category rule files exist. If not, creates them from templates.
     """
-    # 1. Check Accounts
-    if not os.path.exists(ACCOUNTS_PATH):
-        print(f"⚠️ {ACCOUNTS_PATH} not found. Creating from template...")
-        if os.path.exists(ACCOUNTS_TEMPLATE_PATH):
-            shutil.copy(ACCOUNTS_TEMPLATE_PATH, ACCOUNTS_PATH)
-        else:
-            # Fallback if template is missing too
-            with open(ACCOUNTS_PATH, "w") as f:
-                f.write("{}")
-
-    # 2. Check Categories
     if not os.path.exists(CATEGORIES_PATH):
         print(f"⚠️ {CATEGORIES_PATH} not found. Initializing...")
         if ENV == "dev" and os.path.exists(CATEGORIES_PROD_PATH):

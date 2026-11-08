@@ -82,9 +82,22 @@ def _api_request(method, path, body=None, params=None):
         err_body = ""
         try:
             err_body = e.read().decode("utf-8")
+            parsed_err = json.loads(err_body)
+            if isinstance(parsed_err, dict) and parsed_err.get("error") == "ASPSP_ERROR":
+                detail_msg = (parsed_err.get("detail") or {}).get("message") or parsed_err.get("message") or "ASPSP Error"
+                raise RuntimeError(
+                    f"Bank's Open Banking server (ASPSP) returned an upstream error ({detail_msg}). "
+                    "The bank's API may be undergoing maintenance—please try again later."
+                ) from e
+        except RuntimeError:
+            raise
         except Exception:
             pass
         raise RuntimeError(f"Enable Banking API HTTP {e.code}: {err_body or e.reason}") from e
+    except TimeoutError as e:
+        raise RuntimeError(
+            "Bank's Open Banking server timed out after 30s (upstream bank API may be slow or down)."
+        ) from e
 
 
 def start_authorization(bank_key, valid_days=179):

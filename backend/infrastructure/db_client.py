@@ -332,3 +332,102 @@ def save_dim_property_assets_table(table_id, prop_df):
         return True, f"Saved {len(df_to_load)} property valuation record(s) to `{table_id}`."
     except Exception as e:
         return False, str(e)
+
+
+def save_dim_accounts_table(table_id, accounts_df):
+    """
+    Replaces the finoob.accounts.dim_accounts table in BigQuery with the edited DataFrame
+    (supports row edits, new bank accounts, and archiving/deletions).
+    """
+    client = get_client()
+    df_to_load = accounts_df.copy()
+
+    expected_cols = [
+        "account_id",
+        "account_name",
+        "bank",
+        "account_type",
+        "active",
+        "enable_banking_uid",
+        "enable_banking_iban",
+        "enable_banking_valid_until",
+        "updated_at",
+    ]
+    for col in expected_cols:
+        if col not in df_to_load.columns:
+            df_to_load[col] = None
+
+    df_to_load = df_to_load[expected_cols].copy()
+    df_to_load["account_id"] = df_to_load["account_id"].fillna("").astype(str).str.strip()
+    df_to_load = df_to_load[df_to_load["account_id"] != ""].reset_index(drop=True)
+
+    df_to_load["account_name"] = df_to_load["account_name"].fillna("").astype(str).str.strip()
+    df_to_load["bank"] = df_to_load["bank"].fillna("other").astype(str).str.strip().str.lower()
+    df_to_load["account_type"] = df_to_load["account_type"].fillna("Cash").astype(str).str.strip()
+    df_to_load["active"] = df_to_load["active"].fillna(True).astype(bool)
+
+    for opt_col in ["enable_banking_uid", "enable_banking_iban"]:
+        df_to_load[opt_col] = df_to_load[opt_col].apply(
+            lambda x: None if pd.isna(x) or str(x).strip() in ("", "None", "nan") else str(x).strip()
+        )
+
+    df_to_load["enable_banking_valid_until"] = pd.to_datetime(
+        df_to_load["enable_banking_valid_until"], utc=True, errors="coerce"
+    )
+    df_to_load["updated_at"] = datetime.now(timezone.utc)
+
+    schema = [
+        bigquery.SchemaField("account_id", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("account_name", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("bank", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("account_type", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("active", "BOOL", mode="REQUIRED"),
+        bigquery.SchemaField("enable_banking_uid", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("enable_banking_iban", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("enable_banking_valid_until", "TIMESTAMP", mode="NULLABLE"),
+        bigquery.SchemaField("updated_at", "TIMESTAMP", mode="NULLABLE"),
+    ]
+
+    try:
+        job_config = bigquery.LoadJobConfig(
+            schema=schema,
+            write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+        )
+        job = client.load_table_from_dataframe(df_to_load, table_id, job_config=job_config)
+        job.result()
+        return True, f"Saved {len(df_to_load)} account record(s) to `{table_id}`."
+    except Exception as e:
+        return False, str(e)
+
+
+def update_account_open_banking_link(table_id, acc_id, account_uid, valid_until=None, iban=None):
+    """
+    Updates Enable Banking connection fields for a single account in finoob.accounts.dim_accounts.
+    """
+    client = get_client()
+    valid_dt = pd.to_datetime(valid_until, utc=True, errors="coerce") if valid_until else pd.NaT
+    valid_ts = valid_dt.to_pydatetime() if pd.notna(valid_dt) else None
+
+    sql = f"""
+        UPDATE `{table_id}`
+        SET
+            enable_banking_uid = @uid,
+            enable_banking_valid_until = COALESCE(@valid_until, enable_banking_valid_until),
+            enable_banking_iban = COALESCE(@iban, enable_banking_iban),
+            updated_at = CURRENT_TIMESTAMP()
+        WHERE account_id = @acc_id
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("acc_id", "STRING", str(acc_id).strip()),
+            bigquery.ScalarQueryParameter("uid", "STRING", str(account_uid).strip() if account_uid else None),
+            bigquery.ScalarQueryParameter("valid_until", "TIMESTAMP", valid_ts),
+            bigquery.ScalarQueryParameter("iban", "STRING", str(iban).strip() if iban else None),
+        ]
+    )
+    try:
+        client.query(sql, job_config=job_config).result()
+        return True
+    except Exception as e:
+        print(f"Error updating Open Banking link in {table_id}: {e}")
+        return False
