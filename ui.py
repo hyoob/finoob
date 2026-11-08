@@ -773,3 +773,88 @@ def render_net_worth_chart(nw_df):
     st.vega_lite_chart(bars_df, spec, use_container_width=True)
 
 
+def get_loans_editor_config():
+    """Returns column configuration for editing finoob.assets.dim_loans."""
+    return {
+        "loan_id": st.column_config.TextColumn(
+            "Loan ID",
+            help="Unique identifier for the loan (e.g. loan_johann_studies).",
+            required=True,
+            width="medium",
+        ),
+        "borrower_name": st.column_config.TextColumn(
+            "Borrower Name",
+            help="Name of the person or business receiving the loan.",
+            required=True,
+            width="small",
+        ),
+        "funding_label": st.column_config.TextColumn(
+            "Funding Label (Outflow)",
+            help="Exact transaction label used when loan principal was sent out.",
+            width="medium",
+        ),
+        "transaction_label": st.column_config.TextColumn(
+            "Repayment Label (Inflow)",
+            help="Exact transaction label used when loan repayments are received.",
+            width="medium",
+        ),
+        "start_date": st.column_config.DateColumn(
+            "Start Date",
+            format="YYYY-MM-DD",
+            required=True,
+            width="small",
+        ),
+        "full_funding_date": st.column_config.DateColumn(
+            "Full Funding Date",
+            format="YYYY-MM-DD",
+            width="small",
+        ),
+        "initial_principal": st.column_config.NumberColumn(
+            "Initial Principal (€)",
+            format="%.2f €",
+            min_value=0.0,
+            step=100.0,
+            required=True,
+            width="small",
+        ),
+        "status": st.column_config.SelectboxColumn(
+            "Status",
+            options=["Active", "Paid Off", "Closed"],
+            required=True,
+            width="small",
+        ),
+        "notes": st.column_config.TextColumn(
+            "Notes",
+            width="large",
+        ),
+    }
+
+
+def get_property_assets_editor_config():
+    """Returns column configuration for editing finoob.assets.dim_property_assets."""
+    return {
+        "property_name": st.column_config.TextColumn(
+            "Property Name",
+            help="Name of the property asset (e.g. House).",
+            required=True,
+            width="medium",
+        ),
+        "valuation_date": st.column_config.DateColumn(
+            "Valuation Date",
+            help="Effective date of this valuation (add a new row with a newer date to record a revaluation over time).",
+            format="YYYY-MM-DD",
+            required=True,
+            width="medium",
+        ),
+        "valuation_amount": st.column_config.NumberColumn(
+            "Valuation Amount (€)",
+            format="%.2f €",
+            min_value=0.0,
+            step=1000.0,
+            required=True,
+            width="medium",
+        ),
+    }
+
+
+

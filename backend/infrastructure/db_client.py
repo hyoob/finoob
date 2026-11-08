@@ -230,3 +230,105 @@ def save_mortgage_updates(table_id, edited_df):
             client.delete_table(temp_table_id)
         except Exception:
             pass
+
+
+def save_dim_loans_table(table_id, loans_df):
+    """
+    Replaces the dim_loans table in BigQuery with the edited DataFrame
+    (supports row edits, additions, and deletions).
+    """
+    client = get_client()
+    df_to_load = loans_df.copy()
+
+    expected_cols = [
+        "loan_id",
+        "borrower_name",
+        "transaction_label",
+        "start_date",
+        "full_funding_date",
+        "initial_principal",
+        "status",
+        "notes",
+        "funding_label",
+    ]
+    for col in expected_cols:
+        if col not in df_to_load.columns:
+            df_to_load[col] = None
+
+    df_to_load = df_to_load[expected_cols].copy()
+    for str_col in ["loan_id", "borrower_name", "transaction_label", "status", "notes", "funding_label"]:
+        df_to_load[str_col] = df_to_load[str_col].fillna("").astype(str).str.strip()
+
+    # Drop completely blank rows (where loan_id and borrower_name are both empty)
+    df_to_load = df_to_load[
+        (df_to_load["loan_id"] != "") | (df_to_load["borrower_name"] != "")
+    ].reset_index(drop=True)
+
+    for dt_col in ["start_date", "full_funding_date"]:
+        df_to_load[dt_col] = pd.to_datetime(df_to_load[dt_col], errors="coerce").dt.date
+
+    df_to_load["initial_principal"] = pd.to_numeric(
+        df_to_load["initial_principal"], errors="coerce"
+    ).fillna(0.0).astype(float)
+
+    schema = [
+        bigquery.SchemaField("loan_id", "STRING"),
+        bigquery.SchemaField("borrower_name", "STRING"),
+        bigquery.SchemaField("transaction_label", "STRING"),
+        bigquery.SchemaField("start_date", "DATE"),
+        bigquery.SchemaField("full_funding_date", "DATE"),
+        bigquery.SchemaField("initial_principal", "FLOAT"),
+        bigquery.SchemaField("status", "STRING"),
+        bigquery.SchemaField("notes", "STRING"),
+        bigquery.SchemaField("funding_label", "STRING"),
+    ]
+
+    try:
+        job_config = bigquery.LoadJobConfig(
+            schema=schema,
+            write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+        )
+        job = client.load_table_from_dataframe(df_to_load, table_id, job_config=job_config)
+        job.result()
+        return True, f"Saved {len(df_to_load)} loan record(s) to `{table_id}`."
+    except Exception as e:
+        return False, str(e)
+
+
+def save_dim_property_assets_table(table_id, prop_df):
+    """
+    Replaces the dim_property_assets table in BigQuery with the edited DataFrame
+    (supports row edits, new dated valuations, and deletions).
+    """
+    client = get_client()
+    df_to_load = prop_df.copy()
+
+    expected_cols = ["property_name", "valuation_date", "valuation_amount"]
+    for col in expected_cols:
+        if col not in df_to_load.columns:
+            df_to_load[col] = None
+
+    df_to_load = df_to_load[expected_cols].copy()
+    df_to_load["property_name"] = df_to_load["property_name"].fillna("").astype(str).str.strip()
+    df_to_load = df_to_load[df_to_load["property_name"] != ""].reset_index(drop=True)
+    df_to_load["valuation_date"] = pd.to_datetime(df_to_load["valuation_date"], errors="coerce").dt.date
+    df_to_load["valuation_amount"] = pd.to_numeric(
+        df_to_load["valuation_amount"], errors="coerce"
+    ).fillna(0.0).astype(float)
+
+    schema = [
+        bigquery.SchemaField("property_name", "STRING"),
+        bigquery.SchemaField("valuation_date", "DATE"),
+        bigquery.SchemaField("valuation_amount", "FLOAT"),
+    ]
+
+    try:
+        job_config = bigquery.LoadJobConfig(
+            schema=schema,
+            write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+        )
+        job = client.load_table_from_dataframe(df_to_load, table_id, job_config=job_config)
+        job.result()
+        return True, f"Saved {len(df_to_load)} property valuation record(s) to `{table_id}`."
+    except Exception as e:
+        return False, str(e)

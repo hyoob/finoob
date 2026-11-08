@@ -227,3 +227,88 @@ def get_net_worth_breakdown_query(table_id):
         ORDER BY month_string ASC
     """
 
+
+def get_dim_loans_query(table_id):
+    return f"""
+        SELECT
+            loan_id,
+            borrower_name,
+            funding_label,
+            transaction_label,
+            start_date,
+            full_funding_date,
+            initial_principal,
+            status,
+            notes
+        FROM `{table_id}`
+        ORDER BY start_date DESC, loan_id ASC
+    """
+
+
+def get_loan_receivables_query(view_id):
+    return f"""
+        SELECT
+            loan_id,
+            report_month,
+            remaining_asset_value
+        FROM `{view_id}`
+        ORDER BY report_month DESC, loan_id ASC
+    """
+
+
+def get_loan_transactions_query(tx_table_id, loans_table_id):
+    return f"""
+        SELECT
+            l.loan_id,
+            l.borrower_name,
+            t.date,
+            t.account,
+            t.description,
+            t.label,
+            t.category,
+            COALESCE(t.debit, 0.0) AS debit,
+            COALESCE(t.credit, 0.0) AS credit,
+            CASE
+                WHEN t.label = l.funding_label THEN 'Funding (Outflow)'
+                WHEN t.label = l.transaction_label THEN 'Repayment (Inflow)'
+                ELSE 'Other'
+            END AS loan_flow_type
+        FROM `{tx_table_id}` t
+        INNER JOIN `{loans_table_id}` l
+            ON t.label = l.transaction_label
+            OR t.label = l.funding_label
+        ORDER BY t.date DESC, t.transaction_number DESC
+    """
+
+
+def get_dim_property_assets_query(table_id):
+    return f"""
+        SELECT
+            property_name,
+            valuation_date,
+            valuation_amount
+        FROM `{table_id}`
+        ORDER BY property_name ASC, valuation_date DESC
+    """
+
+
+def get_pension_monthly_query(view_id):
+    return f"""
+        SELECT
+            month,
+            account,
+            balance,
+            total_contributions
+        FROM `{view_id}`
+        ORDER BY month DESC
+    """
+
+
+def get_pension_raw_query(table_id):
+    return f"""
+        SELECT *
+        FROM `{table_id}`
+        ORDER BY Effective_Date DESC, Contribution_Type ASC
+    """
+
+
