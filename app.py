@@ -13,4 +13,5 @@ Select a mode from the sidebar to get started:
 * **📂 Manage Categories**: Add, remove, and edit categories and keywords.
 * **🏠 Mortgage**: View and edit mortgage terms.
 * **📈 Stocks**: Track stock grants and vesting schedule.
+* **📊 Dashboard**: View monthly financial stats, savings rate, and net worth growth.
 """)

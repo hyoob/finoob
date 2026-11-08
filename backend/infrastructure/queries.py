@@ -193,3 +193,37 @@ def get_stocks_data_query(table_id):
         FROM `{table_id}`
         ORDER BY Date ASC
     """
+
+
+def get_monthly_finance_query(view_id):
+    return f"""
+        SELECT
+            month,
+            credit,
+            debit,
+            profit,
+            savings_rate,
+            EOM_total_balance,
+            MoM_total_balance,
+            MoM_total_balance_percent
+        FROM `{view_id}`
+        ORDER BY month DESC
+    """
+
+
+def get_net_worth_breakdown_query(table_id):
+    return f"""
+        SELECT
+            month_string AS month,
+            ROUND(SUM(IF(wealth_category = 'Equity', COALESCE(closing_balance, 0), 0)), 0) AS equity_stocks,
+            ROUND(SUM(IF(wealth_category = 'Retirement', COALESCE(closing_balance, 0), 0)), 0) AS pension,
+            ROUND(SUM(IF(wealth_category = 'Receivables', COALESCE(closing_balance, 0), 0)), 0) AS receivables_loans,
+            ROUND(SUM(IF(wealth_category IN ('Cash', 'Savings'), COALESCE(closing_balance, 0), 0)), 0) AS cash_and_savings,
+            ROUND(SUM(IF(wealth_category IN ('Real Estate', 'Debt'), COALESCE(closing_balance, 0), 0)), 0) AS home_equity,
+            ROUND(SUM(COALESCE(closing_balance, 0)), 0) AS total_net_worth
+        FROM `{table_id}`
+        WHERE month_string IS NOT NULL
+        GROUP BY month_string
+        ORDER BY month_string ASC
+    """
+

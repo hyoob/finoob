@@ -491,3 +491,276 @@ def render_stock_visualizations(df):
             use_container_width=True,
             hide_index=True
         )
+
+
+def render_monthly_dashboard_kpis(kpis):
+    """Renders top-level summary KPI cards for the selected period on the Dashboard page."""
+    if not kpis:
+        return
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    nw_delta = None
+    if kpis.get("latest_net_worth_mom") is not None:
+        mom_val = round(kpis["latest_net_worth_mom"])
+        mom_pct = kpis.get("latest_net_worth_mom_pct")
+        if mom_pct is not None:
+            nw_delta = f"{mom_val:+,.0f} € ({float(mom_pct):+.1f}%)"
+        else:
+            nw_delta = f"{mom_val:+,.0f} €"
+
+    c1.metric(
+        f"Latest Net Worth ({kpis.get('latest_net_worth_month', 'N/A')})",
+        f"€{round(kpis.get('latest_net_worth', 0.0)):,.0f}",
+        delta=nw_delta,
+    )
+    c2.metric(
+        f"Avg Monthly Income ({kpis.get('months_count', 0)} mo)",
+        f"€{round(kpis.get('avg_income', 0.0)):,.0f}",
+    )
+    c3.metric(
+        f"Avg Monthly Expenses ({kpis.get('months_count', 0)} mo)",
+        f"€{round(kpis.get('avg_expenses', 0.0)):,.0f}",
+    )
+    c4.metric(
+        "Avg Monthly Profit",
+        f"€{round(kpis.get('avg_profit', 0.0)):+,.0f}",
+        delta=f"{round(kpis.get('weighted_savings_rate', 0.0)):.0f}% savings rate",
+    )
+
+
+def render_monthly_stats_table(df):
+    """
+    Renders the Monthly Financial Stats table with currency/percentage formatting
+    and green/red color coding for positive/negative metrics.
+    """
+    if df is None or df.empty:
+        st.info("No monthly financial data available for the selected filter.")
+        return
+
+    display_cols = [
+        "month",
+        "income",
+        "expenses",
+        "profit",
+        "savings_rate",
+        "net_worth",
+        "net_worth_change_mom",
+        "net_worth_growth_mom_pct",
+    ]
+    view_df = df[[c for c in display_cols if c in df.columns]].copy().reset_index(drop=True)
+
+    if view_df.size > int(pd.options.styler.render.max_elements):
+        pd.set_option("styler.render.max_elements", view_df.size + 1000)
+
+    def _pos_neg_css(val):
+        try:
+            if pd.notna(val):
+                fval = float(val)
+                if fval > 0:
+                    return "color: #22c55e; font-weight: 600"
+                if fval < 0:
+                    return "color: #ef4444; font-weight: 600"
+        except (ValueError, TypeError):
+            pass
+        return ""
+
+    styled = (
+        view_df.style.map(
+            _pos_neg_css,
+            subset=["profit", "savings_rate", "net_worth_change_mom", "net_worth_growth_mom_pct"],
+        )
+        .format(
+            {
+                "income": lambda v: "—" if pd.isna(v) else f"€{round(float(v)):,.0f}",
+                "expenses": lambda v: "—" if pd.isna(v) else f"€{round(float(v)):,.0f}",
+                "profit": lambda v: "—" if pd.isna(v) else f"{round(float(v)):+,.0f} €",
+                "savings_rate": lambda v: "—" if pd.isna(v) else f"{round(float(v)):.0f}%",
+                "net_worth": lambda v: "—" if pd.isna(v) else f"€{round(float(v)):,.0f}",
+                "net_worth_change_mom": lambda v: "—" if pd.isna(v) else f"{round(float(v)):+,.0f} €",
+                "net_worth_growth_mom_pct": lambda v: "—" if pd.isna(v) else f"{float(v):+.1f}%",
+            }
+        )
+    )
+
+    st.dataframe(
+        styled,
+        use_container_width=True,
+        hide_index=True,
+        height=min(700, 38 * (len(view_df) + 1) + 12),
+        column_config={
+            "month": st.column_config.TextColumn("Month", width="small"),
+            "income": st.column_config.NumberColumn("Income", width="medium"),
+            "expenses": st.column_config.NumberColumn("Expenses", width="medium"),
+            "profit": st.column_config.NumberColumn("Profit", width="medium"),
+            "savings_rate": st.column_config.NumberColumn(
+                "Savings Rate",
+                help="Profit / Income (%)",
+                width="small",
+            ),
+            "net_worth": st.column_config.NumberColumn("Net Worth", width="medium"),
+            "net_worth_change_mom": st.column_config.NumberColumn(
+                "Net Worth Change MoM",
+                width="medium",
+            ),
+            "net_worth_growth_mom_pct": st.column_config.NumberColumn(
+                "Net Worth Growth % MoM",
+                width="small",
+            ),
+        },
+    )
+
+
+def render_net_worth_chart(nw_df):
+    """
+    Renders a stacked bar + total net worth line combo chart:
+      - Stacked bars (bottom to top): equity_stocks, pension, receivables_loans, cash_and_savings, home_equity
+      - Line overlay: total_net_worth
+    Uses st.vega_lite_chart with a single dataset and constant spec so filter changes update
+    in-place instantly without Vega-Lite re-initialization or axis clipping.
+    """
+    if nw_df is None or nw_df.empty:
+        st.info("No net worth breakdown data available for the selected filter.")
+        return
+
+    work_df = nw_df.copy().sort_values("month", ascending=True).reset_index(drop=True)
+    work_df["month_label"] = pd.to_datetime(work_df["month"] + "-01").dt.strftime("%b %Y")
+
+    stack_cols = [
+        ("equity_stocks", 1),
+        ("pension", 2),
+        ("receivables_loans", 3),
+        ("cash_and_savings", 4),
+        ("home_equity", 5),
+    ]
+
+    long_rows = []
+    for _, row in work_df.iterrows():
+        m_str = str(row["month"])
+        m_sort = int(m_str.replace("-", "")) if m_str.replace("-", "").isdigit() else 0
+        for comp_name, stack_order in stack_cols:
+            long_rows.append(
+                {
+                    "month": m_str,
+                    "month_sort": m_sort,
+                    "month_label": str(row["month_label"]),
+                    "series": comp_name,
+                    "stack_order": int(stack_order),
+                    "amount": float(row.get(comp_name, 0.0) or 0.0),
+                    "total_net_worth": float(row.get("total_net_worth", 0.0) or 0.0),
+                    "equity_stocks": float(row.get("equity_stocks", 0.0) or 0.0),
+                    "pension": float(row.get("pension", 0.0) or 0.0),
+                    "receivables_loans": float(row.get("receivables_loans", 0.0) or 0.0),
+                    "cash_and_savings": float(row.get("cash_and_savings", 0.0) or 0.0),
+                    "home_equity": float(row.get("home_equity", 0.0) or 0.0),
+                }
+            )
+    bars_df = pd.DataFrame(long_rows)
+
+    legend_domain = [
+        "total_net_worth",
+        "equity_stocks",
+        "pension",
+        "receivables_loans",
+        "cash_and_savings",
+        "home_equity",
+    ]
+    legend_range = [
+        "#3b78e7",
+        "#12b5cb",
+        "#e52592",
+        "#f06b22",
+        "#f9ab00",
+        "#7cb342",
+    ]
+
+    shared_tooltips = [
+        {"field": "month_label", "type": "nominal", "title": "Month"},
+        {"field": "total_net_worth", "type": "quantitative", "title": "total_net_worth (€)", "format": ",.0f"},
+        {"field": "home_equity", "type": "quantitative", "title": "home_equity (€)", "format": ",.0f"},
+        {"field": "cash_and_savings", "type": "quantitative", "title": "cash_and_savings (€)", "format": ",.0f"},
+        {"field": "receivables_loans", "type": "quantitative", "title": "receivables_loans (€)", "format": ",.0f"},
+        {"field": "pension", "type": "quantitative", "title": "pension (€)", "format": ",.0f"},
+        {"field": "equity_stocks", "type": "quantitative", "title": "equity_stocks (€)", "format": ",.0f"},
+    ]
+
+    x_encoding = {
+        "field": "month_label",
+        "type": "nominal",
+        "sort": {"field": "month_sort", "op": "min", "order": "ascending"},
+        "title": None,
+        "axis": {
+            "labelAngle": 0,
+            "labelOverlap": "greedy",
+            "labelFlush": False,
+            "labelPadding": 8,
+            "labelLimit": 120,
+            "minExtent": 32,
+        },
+    }
+
+    y_axis_cfg = {
+        "format": ",.0f",
+        "labelPadding": 8,
+        "minExtent": 65,
+    }
+
+    spec = {
+        "height": 430,
+        "padding": {"top": 12, "bottom": 20, "left": 12, "right": 16},
+        "view": {"stroke": "transparent"},
+        "layer": [
+            {
+                "mark": {"type": "bar"},
+                "encoding": {
+                    "x": x_encoding,
+                    "y": {
+                        "field": "amount",
+                        "type": "quantitative",
+                        "stack": "zero",
+                        "title": None,
+                        "axis": y_axis_cfg,
+                    },
+                    "color": {
+                        "field": "series",
+                        "type": "nominal",
+                        "scale": {"domain": legend_domain, "range": legend_range},
+                        "legend": {
+                            "orient": "top",
+                            "direction": "horizontal",
+                            "title": None,
+                            "symbolType": "square",
+                        },
+                    },
+                    "order": {"field": "stack_order", "type": "quantitative", "sort": "ascending"},
+                    "tooltip": shared_tooltips,
+                },
+            },
+            {
+                "transform": [
+                    {"filter": "datum.stack_order === 1"},
+                    {"calculate": "'total_net_worth'", "as": "line_series"},
+                ],
+                "mark": {"type": "line", "strokeWidth": 2.5, "color": "#3b78e7"},
+                "encoding": {
+                    "x": x_encoding,
+                    "y": {
+                        "field": "total_net_worth",
+                        "type": "quantitative",
+                        "title": None,
+                        "axis": y_axis_cfg,
+                    },
+                    "color": {
+                        "field": "line_series",
+                        "type": "nominal",
+                        "scale": {"domain": legend_domain, "range": legend_range},
+                    },
+                    "tooltip": shared_tooltips,
+                },
+            },
+        ],
+    }
+
+    st.vega_lite_chart(bars_df, spec, use_container_width=True)
+
+
