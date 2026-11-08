@@ -249,6 +249,17 @@ def ensure_rule_columns(df):
         if df.columns[0] != "bulk_select":
             cols = ["bulk_select"] + [c for c in df.columns if c != "bulk_select"]
             df = df[cols]
+    if "debit" in df.columns or "credit" in df.columns:
+        debits = pd.to_numeric(df.get("debit", 0.0), errors="coerce").fillna(0.0)
+        credits = pd.to_numeric(df.get("credit", 0.0), errors="coerce").fillna(0.0)
+        amt_series = (credits - debits).round(2)
+        if "amount" in df.columns:
+            df["amount"] = amt_series
+        elif "date" in df.columns:
+            date_pos = list(df.columns).index("date")
+            df.insert(date_pos + 1, "amount", amt_series)
+        else:
+            df["amount"] = amt_series
     return df
 
 
@@ -371,11 +382,11 @@ def sort_transactions_for_display(df, sort_mode=SORT_MODE_SIMILAR_DESC):
 
 
 def strip_rule_columns(df):
-    """Drops UI-only rule-creation, reimbursement-link, bulk-select, and row-tracking columns before saving transactions to BigQuery."""
+    """Drops UI-only rule-creation, reimbursement-link, bulk-select, display amount, and row-tracking columns before saving transactions to BigQuery."""
     if df is None:
         return df
     return df.drop(
-        columns=["save_as_rule", "rule_keyword", "link_reimb", "bulk_select", "_row_id"],
+        columns=["save_as_rule", "rule_keyword", "link_reimb", "bulk_select", "amount", "_row_id"],
         errors="ignore",
     )
 

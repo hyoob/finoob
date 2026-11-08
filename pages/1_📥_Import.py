@@ -15,7 +15,7 @@ from backend.services import (
 )
 
 # Reload backend modules once per session if code was updated while Streamlit was running
-if "_import_modules_reloaded_v3" not in st.session_state:
+if "_import_modules_reloaded_v8" not in st.session_state:
     importlib.reload(queries)
     importlib.reload(account_logic)
     importlib.reload(transaction_logic)
@@ -27,7 +27,7 @@ if "_import_modules_reloaded_v3" not in st.session_state:
     importlib.reload(accounts_service)
     importlib.reload(ingestion_service)
     importlib.reload(ui)
-    st.session_state["_import_modules_reloaded_v3"] = True
+    st.session_state["_import_modules_reloaded_v8"] = True
 
 # This sets the title, layout
 ui.init_page("Import")
@@ -96,48 +96,83 @@ def _format_rule_toolbar_caption(df_snapshot, staged_links=None):
 
     return (
         f"🏷️ **{cat_cnt}/{total_cnt} categorized** (`{uncat_cnt}` uncategorized){reimb_part} — "
-        "💡 *Tick **➕ Rule** to add a rule, **🔗 Reimb** to link reimbursement(s), or **🏷️ Bulk** on multiple rows to bulk categorize.*"
+        "💡 *Tick **☑️ Select** on the left to Bulk Categorize or Link Reimbursements, or **➕ Rule** on the right to add a rule.*"
     )
 
 
 def _inject_draggable_resizable_dialog():
     """
     Makes the active Streamlit @st.dialog non-blocking (transparent backdrop),
-    draggable by its header bar, and horizontally resizable by dragging its left or right edge.
+    around half the viewport width by default (~52vw), draggable by its header bar,
+    and horizontally resizable by dragging its left or right edge.
     """
-    st.markdown(
-        """
-        <style>
-        div[data-testid="stDialog"] {
-            background: transparent !important;
-            backdrop-filter: none !important;
-            pointer-events: none !important;
-        }
-        div[data-testid="stDialog"] > div {
-            background: transparent !important;
-            pointer-events: none !important;
-            justify-content: flex-end !important;
-            padding-right: 2.0rem !important;
-        }
-        div[data-testid="stDialog"] div[role="dialog"] {
-            pointer-events: auto !important;
-            position: relative !important;
-            max-width: 96vw !important;
-            min-width: 420px !important;
-            box-shadow: 0 14px 44px rgba(0, 0, 0, 0.45) !important;
-            border: 1px solid rgba(128, 128, 128, 0.4) !important;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
     st.components.v1.html(
         r"""
         <script>
         (function() {
-            const doc = window.parent.document;
+            const win = window.parent;
+            const doc = win.document;
+
+            // Hide this helper iframe's Streamlit element wrapper so it takes 0px of space
+            if (window.frameElement) {
+                window.frameElement.style.height = "0px";
+                window.frameElement.style.minHeight = "0px";
+                window.frameElement.style.display = "none";
+                const elContainer = window.frameElement.closest('[data-testid="stElementContainer"]');
+                if (elContainer) {
+                    elContainer.style.display = "none";
+                    elContainer.style.height = "0px";
+                    elContainer.style.minHeight = "0px";
+                    elContainer.style.margin = "0px";
+                    elContainer.style.padding = "0px";
+                }
+            }
+
+            // Inject dialog CSS into parent <head> so no extra stMarkdown container is added inside the dialog
+            let styleEl = doc.getElementById("finoob-dialog-style");
+            if (!styleEl) {
+                styleEl = doc.createElement("style");
+                styleEl.id = "finoob-dialog-style";
+                doc.head.appendChild(styleEl);
+            }
+            styleEl.textContent = `
+                div[data-testid="stDialog"] {
+                    background: transparent !important;
+                    backdrop-filter: none !important;
+                    pointer-events: none !important;
+                }
+                div[data-testid="stDialog"] > div {
+                    background: transparent !important;
+                    pointer-events: none !important;
+                    justify-content: flex-end !important;
+                    padding-right: 2.0rem !important;
+                }
+                div[data-testid="stDialog"] div[role="dialog"] {
+                    pointer-events: auto !important;
+                    position: relative !important;
+                    width: 52vw;
+                    max-width: 96vw !important;
+                    min-width: 520px !important;
+                    box-shadow: 0 14px 44px rgba(0, 0, 0, 0.45) !important;
+                    border: 1px solid rgba(128, 128, 128, 0.4) !important;
+                }
+                div[data-testid="stDialog"] div[data-testid="stElementContainer"]:has(iframe),
+                div[data-testid="stDialog"] div[data-testid="stCustomComponentV1"],
+                div[data-testid="stDialog"] iframe {
+                    display: none !important;
+                    height: 0px !important;
+                    min-height: 0px !important;
+                    margin: 0px !important;
+                    padding: 0px !important;
+                }
+            `;
+
             const dlg = doc.querySelector('div[data-testid="stDialog"] div[role="dialog"]');
-            if (!dlg || dlg.dataset.draggableAttached === "true") return;
+            if (!dlg) return;
+            if (!dlg.style.width) {
+                dlg.style.width = Math.max(520, Math.round(win.innerWidth * 0.52)) + "px";
+            }
+            if (dlg.dataset.draggableAttached === "true") return;
             dlg.dataset.draggableAttached = "true";
 
             function getTranslate() {
@@ -194,12 +229,12 @@ def _inject_draggable_resizable_dialog():
                     dlg.style.transform = `translate(${origX + dx}px, ${origY + dy}px)`;
                 } else if (isResizing) {
                     const dx = e.clientX - rStartX;
-                    const maxW = window.parent.innerWidth * 0.96;
+                    const maxW = win.innerWidth * 0.96;
                     if (resizeSide === "left") {
-                        const newW = Math.min(maxW, Math.max(420, startW - dx));
+                        const newW = Math.min(maxW, Math.max(460, startW - dx));
                         dlg.style.width = `${newW}px`;
                     } else if (resizeSide === "right") {
-                        const newW = Math.min(maxW, Math.max(420, startW + dx));
+                        const newW = Math.min(maxW, Math.max(460, startW + dx));
                         const actualDelta = newW - startW;
                         dlg.style.width = `${newW}px`;
                         dlg.style.transform = `translate(${rOrigX + actualDelta}px, ${rOrigY}px)`;
@@ -234,6 +269,20 @@ def _inject_scroll_preserver(nonce=""):
         (function() {{
             const win = window.parent;
             const doc = win.document;
+
+            if (window.frameElement) {{
+                window.frameElement.style.height = "0px";
+                window.frameElement.style.minHeight = "0px";
+                window.frameElement.style.display = "none";
+                const elContainer = window.frameElement.closest('[data-testid="stElementContainer"]');
+                if (elContainer) {{
+                    elContainer.style.display = "none";
+                    elContainer.style.height = "0px";
+                    elContainer.style.minHeight = "0px";
+                    elContainer.style.margin = "0px";
+                    elContainer.style.padding = "0px";
+                }}
+            }}
 
             win.__finoobGridScrollByIdx = win.__finoobGridScrollByIdx || {{}};
             if (typeof win.__finoobMainScrollTop !== "number") {{
@@ -437,9 +486,8 @@ def _open_rule_dialog_on_tick(full_df, key_prefix, on_apply_rules, on_sync_row_e
     init_lbl = str(row.get("label") or "").strip()
     amt = max(float(row.get("debit") or 0.0), float(row.get("credit") or 0.0))
 
-    @st.dialog("⚡ Add Categorization Rule (Drag header to move, edges to resize)")
+    @st.dialog("⚡ Add Categorization Rule (Drag header to move, edges to resize)", width="large")
     def _rule_modal():
-        _inject_draggable_resizable_dialog()
         live_cats = rules_service.get_all_categories()
         live_cat_options = sorted(list(live_cats.keys()))
 
@@ -562,28 +610,29 @@ def _open_rule_dialog_on_tick(full_df, key_prefix, on_apply_rules, on_sync_row_e
                 else:
                     st.warning(msg)
 
+        _inject_draggable_resizable_dialog()
+
     _rule_modal()
 
 
 def _render_rule_toolbar(df_snapshot, key_prefix, on_apply_rules, on_toggle_uncat=None, staged_links=None):
     """
-    Renders the categorization progress counter, a placeholder slot for the Bulk Categorize button,
-    a sort selector, and the '🎯 Show only uncategorized' toggle above the transactions editor.
+    Renders the categorization progress counter, a sort selector, the '🎯 Show only uncategorized' toggle,
+    and a placeholder slot right above the table for the Selection Action Bar (Bulk Categorize / Link Reimbursement).
     Returns (show_only_uncat, sort_mode, caption_slot, bulk_top_slot).
     """
     if df_snapshot is None or df_snapshot.empty:
         return False, categorization_logic.SORT_MODE_SIMILAR_DESC, None, None
 
-    tb_col1, tb_col2, tb_col3, tb_col4 = st.columns([1.9, 0.9, 1.2, 0.9])
+    tb_col1, tb_col2, tb_col3 = st.columns([2.7, 1.3, 1.0])
     caption_slot = tb_col1.empty()
     caption_slot.caption(_format_rule_toolbar_caption(df_snapshot, staged_links=staged_links))
-    bulk_top_slot = tb_col2.empty()
 
     def _on_sort_change():
         if on_toggle_uncat is not None:
             on_toggle_uncat(reset_pinned_uncat=False)
 
-    sort_mode = tb_col3.selectbox(
+    sort_mode = tb_col2.selectbox(
         "Sort rows",
         options=categorization_logic.IMPORT_SORT_OPTIONS,
         index=0,
@@ -593,7 +642,7 @@ def _render_rule_toolbar(df_snapshot, key_prefix, on_apply_rules, on_toggle_unca
         help="Group similar descriptions together to speed up bulk categorization and rule creation, or sort by frequency, date, or amount. Underlying chronological order is always preserved when saving.",
     )
 
-    show_only_uncat = tb_col4.toggle(
+    show_only_uncat = tb_col3.toggle(
         "🎯 Show only uncategorized",
         value=False,
         key=f"{key_prefix}_only_uncat_toggle",
@@ -601,14 +650,26 @@ def _render_rule_toolbar(df_snapshot, key_prefix, on_apply_rules, on_toggle_unca
         help="Filter the table to show only transactions without a category. Rows stay visible while you edit them until you apply rules, hide completed rows, or flip this toggle.",
     )
 
+    bulk_top_slot = st.empty()
     return show_only_uncat, sort_mode, caption_slot, bulk_top_slot
 
 
-def _render_bulk_categorize_action(full_df, key_prefix, bulk_top_slot, on_apply_bulk, on_clear_bulk):
+def _render_selection_actions(
+    full_df,
+    key_prefix,
+    bulk_top_slot,
+    staged_links_key,
+    on_apply_bulk,
+    on_stage_reimb,
+    on_clear_bulk,
+    default_account_id=None,
+):
     """
-    When 1+ rows have 'bulk_select' ticked, renders a '🏷️ Bulk Categorize (X selected)' button
-    (both in the top toolbar slot and below the table) that opens a non-blocking, draggable modal
-    to assign a Category and Clean Label to all selected rows at once.
+    When 1+ rows have 'bulk_select' ('☑️ Select' on the left) ticked, renders an action bar
+    (both above and below the table) to choose between:
+      1. '🏷️ Bulk Categorize (X selected)'
+      2. '🔗 Link Reimbursement'
+      3. '✖ Clear Selection'
     """
     if full_df is None or full_df.empty or "bulk_select" not in full_df.columns:
         return
@@ -618,115 +679,136 @@ def _render_bulk_categorize_action(full_df, key_prefix, bulk_top_slot, on_apply_
         return
 
     selected_rids = bulk_rows["_row_id"].astype(str).tolist()
+    selected_rids_set = set(selected_rids)
     cnt = len(selected_rids)
+    sel_credit_cnt = int((pd.to_numeric(bulk_rows.get("credit", 0), errors="coerce").fillna(0.0) > 0).sum())
+    reimb_btn_label = (
+        f"🔗 Link Reimbursement ({sel_credit_cnt} credit)"
+        if sel_credit_cnt > 0
+        else "🔗 Link Reimbursement"
+    )
 
-    top_clicked = False
-    if bulk_top_slot is not None:
-        top_clicked = bulk_top_slot.button(
+    top_bulk_clicked = False
+    top_reimb_clicked = False
+    top_clear_clicked = False
+    target_ctx = bulk_top_slot.container() if bulk_top_slot is not None else st.container()
+    with target_ctx:
+        tc1, tc2, tc3, _ = st.columns([1.35, 1.35, 0.85, 1.45])
+        top_bulk_clicked = tc1.button(
             f"🏷️ Bulk Categorize ({cnt} selected)",
             type="primary",
             use_container_width=True,
             key=f"{key_prefix}_bulk_top_btn_{cnt}",
         )
+        top_reimb_clicked = tc2.button(
+            reimb_btn_label,
+            type="primary" if sel_credit_cnt > 0 else "secondary",
+            use_container_width=True,
+            key=f"{key_prefix}_reimb_top_btn_{cnt}",
+        )
+        top_clear_clicked = tc3.button(
+            "✖ Clear Selection",
+            use_container_width=True,
+            key=f"{key_prefix}_bulk_top_clear_btn_{cnt}",
+        )
 
-    bc_col1, bc_col2, _ = st.columns([1.4, 0.9, 2.5])
-    bot_clicked = bc_col1.button(
-        f"🏷️ Bulk Categorize ({cnt} selected)",
-        type="primary",
-        use_container_width=True,
-        key=f"{key_prefix}_bulk_bot_btn_{cnt}",
-    )
-    if bc_col2.button(
-        "✖ Clear Bulk Selection",
-        use_container_width=True,
-        key=f"{key_prefix}_bulk_clear_btn_{cnt}",
-    ):
+    if top_clear_clicked:
         on_clear_bulk()
         st.rerun()
 
-    if not (top_clicked or bot_clicked):
-        return
+    if top_bulk_clicked:
+        preview_descs = [str(r.get("description") or "").strip() for _, r in bulk_rows.head(4).iterrows()]
+        preview_str = ", ".join(preview_descs) + (f" (+{cnt - 4} more)" if cnt > 4 else "")
 
-    preview_descs = [str(r.get("description") or "").strip() for _, r in bulk_rows.head(4).iterrows()]
-    preview_str = ", ".join(preview_descs) + (f" (+{cnt - 4} more)" if cnt > 4 else "")
+        @st.dialog(f"🏷️ Bulk Categorize {cnt} Row(s) (Drag header to move, edges to resize)", width="large")
+        def _bulk_modal():
+            live_cats = rules_service.get_all_categories()
+            live_cat_options = sorted(list(live_cats.keys()))
 
-    @st.dialog(f"🏷️ Bulk Categorize {cnt} Row(s) (Drag header to move, edges to resize)")
-    def _bulk_modal():
-        _inject_draggable_resizable_dialog()
-        live_cats = rules_service.get_all_categories()
-        live_cat_options = sorted(list(live_cats.keys()))
+            st.caption(f"📋 **Selected ({cnt}):** `{preview_str}`")
+            btab1, btab2 = st.tabs(["🏷️ Assign Category & Label", "📂 New Category"])
 
-        st.caption(f"📋 **Selected ({cnt}):** `{preview_str}`")
-        btab1, btab2 = st.tabs(["🏷️ Assign Category & Label", "📂 New Category"])
+            with btab1:
+                created_cat = st.session_state.get("dlg_bulk_created_cat")
+                default_cat_idx = (
+                    live_cat_options.index(created_cat)
+                    if (created_cat and created_cat in live_cat_options)
+                    else None
+                )
+                cat_val = st.selectbox(
+                    "Category:",
+                    options=live_cat_options,
+                    index=default_cat_idx,
+                    placeholder="Select a category...",
+                    key=f"{key_prefix}_bulk_dlg_cat_{created_cat or ''}",
+                )
+                lbl_val = st.text_input(
+                    "Clean Label:",
+                    placeholder="e.g. Groceries / Coffee / Transfer",
+                    key=f"{key_prefix}_bulk_dlg_lbl",
+                )
 
-        with btab1:
-            created_cat = st.session_state.get("dlg_bulk_created_cat")
-            default_cat_idx = (
-                live_cat_options.index(created_cat)
-                if (created_cat and created_cat in live_cat_options)
-                else None
-            )
-            cat_val = st.selectbox(
-                "Category:",
-                options=live_cat_options,
-                index=default_cat_idx,
-                placeholder="Select a category...",
-                key=f"{key_prefix}_bulk_dlg_cat_{created_cat or ''}",
-            )
-            lbl_val = st.text_input(
-                "Clean Label:",
-                placeholder="e.g. Groceries / Coffee / Transfer",
-                key=f"{key_prefix}_bulk_dlg_lbl",
-            )
+                mb1, mb2 = st.columns([2, 1])
+                if mb1.button(
+                    f"✅ Apply to {cnt} Selected Row(s)",
+                    type="primary",
+                    use_container_width=True,
+                    key=f"{key_prefix}_bulk_dlg_apply_btn",
+                ):
+                    if not cat_val or not lbl_val.strip():
+                        st.error("Please select a Category and enter a Clean Label.")
+                    else:
+                        st.session_state.pop("dlg_bulk_created_cat", None)
+                        st.session_state.pending_rule_toast = (
+                            f"🏷️ Bulk-categorized {cnt} row(s) → {cat_val} / {lbl_val.strip()}"
+                        )
+                        on_apply_bulk(selected_rids, cat_val, lbl_val.strip())
+                        st.rerun()
 
-            mb1, mb2 = st.columns([2, 1])
-            if mb1.button(
-                f"✅ Apply to {cnt} Selected Row(s)",
-                type="primary",
-                use_container_width=True,
-                key=f"{key_prefix}_bulk_dlg_apply_btn",
-            ):
-                if not cat_val or not lbl_val.strip():
-                    st.error("Please select a Category and enter a Clean Label.")
-                else:
+                if mb2.button(
+                    "Cancel",
+                    use_container_width=True,
+                    key=f"{key_prefix}_bulk_dlg_cancel_btn",
+                ):
                     st.session_state.pop("dlg_bulk_created_cat", None)
-                    st.session_state.pending_rule_toast = (
-                        f"🏷️ Bulk-categorized {cnt} row(s) → {cat_val} / {lbl_val.strip()}"
-                    )
-                    on_apply_bulk(selected_rids, cat_val, lbl_val.strip())
                     st.rerun()
 
-            if mb2.button(
-                "Cancel",
-                use_container_width=True,
-                key=f"{key_prefix}_bulk_dlg_cancel_btn",
-            ):
-                st.session_state.pop("dlg_bulk_created_cat", None)
-                st.rerun()
+            with btab2:
+                new_cat_name = st.text_input(
+                    "New Category Name:",
+                    placeholder="e.g. Subscriptions",
+                    key=f"{key_prefix}_bulk_dlg_new_cat_name",
+                )
+                if st.button(
+                    "➕ Create Category",
+                    type="primary",
+                    use_container_width=True,
+                    key=f"{key_prefix}_bulk_dlg_create_cat_btn",
+                ):
+                    ok, msg, _ = rules_service.add_category(new_cat_name)
+                    if ok:
+                        st.cache_data.clear()
+                        st.session_state["dlg_bulk_created_cat"] = new_cat_name.strip()
+                        st.success(
+                            f"✅ {msg} — switch back to **🏷️ Assign Category & Label** (it is now selected for you)!"
+                        )
+                    else:
+                        st.warning(msg)
 
-        with btab2:
-            new_cat_name = st.text_input(
-                "New Category Name:",
-                placeholder="e.g. Subscriptions",
-                key=f"{key_prefix}_bulk_dlg_new_cat_name",
-            )
-            if st.button(
-                "➕ Create Category",
-                type="primary",
-                use_container_width=True,
-                key=f"{key_prefix}_bulk_dlg_create_cat_btn",
-            ):
-                ok, msg, _ = rules_service.add_category(new_cat_name)
-                if ok:
-                    st.cache_data.clear()
-                    st.session_state["dlg_bulk_created_cat"] = new_cat_name.strip()
-                    st.success(
-                        f"✅ {msg} — switch back to **🏷️ Assign Category & Label** (it is now selected for you)!"
-                    )
-                else:
-                    st.warning(msg)
+            _inject_draggable_resizable_dialog()
 
-    _bulk_modal()
+        _bulk_modal()
+
+    elif top_reimb_clicked:
+        _open_reimb_dialog_for_selection(
+            full_df=full_df,
+            selected_rids_set=selected_rids_set,
+            key_prefix=key_prefix,
+            staged_links_key=staged_links_key,
+            on_stage_reimb=on_stage_reimb,
+            on_cancel_reimb=on_clear_bulk,
+            default_account_id=default_account_id,
+        )
 
 
 def _render_staged_reimbursements_summary(staged_links_key):
@@ -759,8 +841,9 @@ def _render_staged_reimbursements_summary(staged_links_key):
             st.rerun()
 
 
-def _open_reimb_dialog_on_tick(
+def _open_reimb_dialog_for_selection(
     full_df,
+    selected_rids_set,
     key_prefix,
     staged_links_key,
     on_stage_reimb,
@@ -768,24 +851,14 @@ def _open_reimb_dialog_on_tick(
     default_account_id=None,
 ):
     """
-    Detects when a user ticks '🔗 Reimb' (link_reimb) on a row in the transactions table
-    and opens a non-blocking, draggable modal dialog to link 1 or more reimbursement credits
-    to an original expense (from either the current import batch or saved BigQuery transactions).
+    Opens a non-blocking, draggable modal dialog to link 1 or more reimbursement credits
+    to an original expense (from either the current import batch or saved BigQuery transactions),
+    pre-selecting any credit rows that were ticked in '☑️ Select'.
     """
-    if full_df is None or full_df.empty or "link_reimb" not in full_df.columns:
+    if full_df is None or full_df.empty:
         return
 
-    prev_key = f"{key_prefix}_prev_reimb_ticked_ids"
-    prev_ticked = st.session_state.get(prev_key, set())
-    cur_ticked_rows = full_df[full_df["link_reimb"] == True]
-    cur_ticked_ids = set(cur_ticked_rows["_row_id"].astype(str).tolist())
-    newly_ticked_ids = [rid for rid in cur_ticked_rows["_row_id"].astype(str).tolist() if rid not in prev_ticked]
-    st.session_state[prev_key] = cur_ticked_ids
-
-    if not newly_ticked_ids:
-        return
-
-    target_rid = newly_ticked_ids[0]
+    target_rid = "_".join(sorted(list(selected_rids_set))[:3]) or "sel"
     if staged_links_key not in st.session_state:
         st.session_state[staged_links_key] = []
 
@@ -806,8 +879,6 @@ def _open_reimb_dialog_on_tick(
 
     @st.dialog("💰 Link Reimbursement(s) to Expense (Drag header to move, edges to resize)", width="large")
     def _reimb_modal():
-        _inject_draggable_resizable_dialog()
-
         # --- 1. Build candidate credit rows from current batch ---
         credit_candidates = []
         for _, r in full_df.iterrows():
@@ -817,7 +888,7 @@ def _open_reimb_dialog_on_tick(
                 acc_id_row = str(r.get("account_id") or default_account_id or "")
                 acc_name_row = str(r.get("account") or account_map.get(acc_id_row, acc_id_row))
                 credit_candidates.append({
-                    "include": (rid == target_rid),
+                    "include": (rid in selected_rids_set),
                     "_row_id": rid,
                     "account_id": acc_id_row,
                     "account": acc_name_row,
@@ -831,12 +902,11 @@ def _open_reimb_dialog_on_tick(
         if not credit_candidates:
             st.warning("⚠️ No unlinked credit (`credit > 0`) rows available in this import batch.")
             if st.button("Close", key=f"{key_prefix}_reimb_empty_close_{target_rid}"):
-                st.session_state[prev_key] = set()
-                on_cancel_reimb()
                 st.rerun()
+            _inject_draggable_resizable_dialog()
             return
 
-        # Put the ticked credit row first so it's immediately visible at the top
+        # Put pre-selected credit rows first so they are immediately visible at the top
         credit_candidates.sort(key=lambda x: (not x["include"], x["date"]))
         credits_df = pd.DataFrame(credit_candidates)
 
@@ -1057,7 +1127,6 @@ def _open_reimb_dialog_on_tick(
                 "credits": staged_credits_list,
                 "expense": staged_exp_dict,
             })
-            st.session_state[prev_key] = set()
             total_c = sum(c["credit"] for c in staged_credits_list)
             st.session_state.pending_rule_toast = (
                 f"💰 Staged reimbursement (€{total_c:.2f}) → {staged_exp_dict['description'][:35]}"
@@ -1070,9 +1139,9 @@ def _open_reimb_dialog_on_tick(
             use_container_width=True,
             key=f"{key_prefix}_reimb_cancel_btn_{target_rid}",
         ):
-            st.session_state[prev_key] = set()
-            on_cancel_reimb()
             st.rerun()
+
+        _inject_draggable_resizable_dialog()
 
     _reimb_modal()
 
@@ -1248,6 +1317,7 @@ def _render_single_account_editor_and_save(new_transactions, warning, latest_bq_
                     if not str(cur.at[idx, "label"] or "").strip():
                         cur.at[idx, "label"] = "Reimbursement"
             cur["link_reimb"] = False
+            cur["bulk_select"] = False
             st.session_state[latest_edit_key] = cur
             st.session_state[buf_key] = cur
             st.session_state[rev_key] = st.session_state.get(rev_key, 0) + 1
@@ -1274,12 +1344,15 @@ def _render_single_account_editor_and_save(new_transactions, warning, latest_bq_
             st.session_state[buf_key] = cur
             st.session_state[rev_key] = st.session_state.get(rev_key, 0) + 1
 
-        _render_bulk_categorize_action(
+        _render_selection_actions(
             edited_df,
             key_prefix=f"{key_prefix}_{account_id}_{cur_rev}",
             bulk_top_slot=bulk_top_slot,
+            staged_links_key=staged_reimb_key,
             on_apply_bulk=_apply_single_bulk,
+            on_stage_reimb=_stage_single_reimb,
             on_clear_bulk=_clear_single_bulk,
+            default_account_id=account_id,
         )
         _open_rule_dialog_on_tick(
             edited_df,
@@ -1287,14 +1360,6 @@ def _render_single_account_editor_and_save(new_transactions, warning, latest_bq_
             on_apply_rules=_apply_single_rules,
             on_sync_row_edits=_sync_single_staged_rows,
             on_cancel_rule=_cancel_single_rule,
-        )
-        _open_reimb_dialog_on_tick(
-            edited_df,
-            key_prefix=f"{key_prefix}_{account_id}_{cur_rev}",
-            staged_links_key=staged_reimb_key,
-            on_stage_reimb=_stage_single_reimb,
-            on_cancel_reimb=_cancel_single_rule,
-            default_account_id=account_id,
         )
         _render_staged_reimbursements_summary(staged_reimb_key)
         _inject_scroll_preserver(nonce=f"single_{account_id}_{cur_rev}_{sort_mode}_{show_only_uncat}")
@@ -1583,8 +1648,9 @@ if tab_sync is not None:
                                 "Include in Save",
                                 help="Check to include this account's new transactions in the unified editor & BigQuery save.",
                                 width="small",
+                                pinned=True,
                             ),
-                            "account_name": st.column_config.TextColumn("Account", width="medium"),
+                            "account_name": st.column_config.TextColumn("Account", width=None, pinned=True),
                             "new_count": st.column_config.NumberColumn("New Tx", format="%d", width="small"),
                             "last_bq_date": st.column_config.TextColumn("Last BQ Date", width="small"),
                             "start_balance": st.column_config.NumberColumn("Last BQ Balance", format="%.2f €"),
@@ -1787,6 +1853,7 @@ if tab_sync is not None:
                                         if not str(cur.at[idx, "label"] or "").strip():
                                             cur.at[idx, "label"] = "Reimbursement"
                                 cur["link_reimb"] = False
+                                cur["bulk_select"] = False
                                 st.session_state.multi_sync_latest_edit = cur
                                 _commit_multi_edits(reset_pinned_uncat=False)
 
@@ -1810,11 +1877,13 @@ if tab_sync is not None:
                                 st.session_state.multi_sync_latest_edit = cur
                                 _commit_multi_edits(reset_pinned_uncat=False)
 
-                            _render_bulk_categorize_action(
+                            _render_selection_actions(
                                 edited_combined_df,
                                 key_prefix=f"multi_sync_{run_id}_{editor_rev}",
                                 bulk_top_slot=bulk_top_slot,
+                                staged_links_key=staged_reimb_multi_key,
                                 on_apply_bulk=_apply_multi_bulk,
+                                on_stage_reimb=_stage_multi_reimb,
                                 on_clear_bulk=_clear_multi_bulk,
                             )
                             _open_rule_dialog_on_tick(
@@ -1823,13 +1892,6 @@ if tab_sync is not None:
                                 on_apply_rules=_apply_multi_rules,
                                 on_sync_row_edits=_sync_multi_staged_rows,
                                 on_cancel_rule=_cancel_multi_rule,
-                            )
-                            _open_reimb_dialog_on_tick(
-                                edited_combined_df,
-                                key_prefix=f"multi_sync_{run_id}_{editor_rev}",
-                                staged_links_key=staged_reimb_multi_key,
-                                on_stage_reimb=_stage_multi_reimb,
-                                on_cancel_reimb=_cancel_multi_rule,
                             )
                             _render_staged_reimbursements_summary(staged_reimb_multi_key)
                             _inject_scroll_preserver(nonce=f"multi_{run_id}_{editor_rev}_{sort_mode}_{show_only_uncat}")

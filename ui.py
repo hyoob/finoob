@@ -101,30 +101,39 @@ def get_import_editor_config(category_options, include_account_col=False):
     """
     Returns config for MODE 1: Import Transactions.
     Shows Date/Label/Category, plus inline rule columns (and Account if include_account_col=True).
+    Hides balance column and auto-sizes Account, Date, Debit, and Credit to fit their max values.
     """
     cfg = {
         "bulk_select": st.column_config.CheckboxColumn(
-            "🏷️ Bulk",
-            help="Tick multiple rows and click the '🏷️ Bulk Categorize' button to assign a Category and Label to all of them at once.",
+            "☑️ Select",
+            help="Tick one or more rows on the left to Bulk Categorize them or Link Reimbursement(s).",
             width="small",
+            pinned=True,
         ),
         "date": st.column_config.DateColumn(
             "date",
-            format="YYYY-MM-DD"
+            format="YYYY-MM-DD",
+            width=None,
+            pinned=True,
         ),
-        "debit": st.column_config.NumberColumn(
-            "debit",
-            format="%.2f",
+        "amount": st.column_config.NumberColumn(
+            "amount",
+            format="%+.2f",
             disabled=True,
+            width=None,
+            pinned=True,
         ),
-        "credit": st.column_config.NumberColumn(
-            "credit",
-            format="%.2f",
-            disabled=True,
+        "description": st.column_config.TextColumn(
+            "description",
+            width="large",
         ),
+        "debit": None,
+        "credit": None,
+        "balance": None,
         "label": st.column_config.TextColumn(
             "label",
             help="The subcategory of the transaction",
+            width="medium",
             required=True,
         ),
         "category": st.column_config.SelectboxColumn(
@@ -136,29 +145,29 @@ def get_import_editor_config(category_options, include_account_col=False):
         ),
         "save_as_rule": st.column_config.CheckboxColumn(
             "➕ Rule",
-            help="Tick to stage a categorization rule for this row below the table (pre-filled with its Description).",
+            help="Tick to create a categorization rule for this row (pre-filled with its Description).",
             width="small",
         ),
-        "link_reimb": st.column_config.CheckboxColumn(
-            "🔗 Reimb",
-            help="Tick on a credit row to link 1 or more reimbursements to an original expense.",
-            width="small",
-        ),
+        "link_reimb": None,
         "rule_keyword": None,
         "_row_id": None,
     }
     if include_account_col:
         cfg["account_id"] = None
-        cfg["account"] = st.column_config.TextColumn("Account", disabled=True, width="medium")
+        cfg["account"] = st.column_config.TextColumn("Account", disabled=True, width=None, pinned=True)
     return cfg
 
 
 def style_credit_column(df):
     """
-    Returns a pandas Styler that highlights positive 'credit' amounts (credit > 0) in green.
-    Requires the 'credit' column to be non-editable (disabled=True) in st.data_editor.
+    Returns a pandas Styler that highlights positive 'amount' or 'credit' values (> 0) in green.
+    Requires the styled column(s) to be non-editable (disabled=True) in st.data_editor.
     """
-    if df is None or df.empty or "credit" not in df.columns:
+    if df is None or df.empty:
+        return df
+
+    target_cols = [c for c in ("amount", "credit") if c in df.columns]
+    if not target_cols:
         return df
 
     if df.size > int(pd.options.styler.render.max_elements):
@@ -172,7 +181,7 @@ def style_credit_column(df):
             pass
         return ""
 
-    return df.style.map(_credit_css, subset=["credit"])
+    return df.style.map(_credit_css, subset=target_cols)
 
 
 def init_page(page_title_suffix=None):
