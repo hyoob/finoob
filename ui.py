@@ -112,6 +112,16 @@ def get_import_editor_config(category_options, include_account_col=False):
             "date",
             format="YYYY-MM-DD"
         ),
+        "debit": st.column_config.NumberColumn(
+            "debit",
+            format="%.2f",
+            disabled=True,
+        ),
+        "credit": st.column_config.NumberColumn(
+            "credit",
+            format="%.2f",
+            disabled=True,
+        ),
         "label": st.column_config.TextColumn(
             "label",
             help="The subcategory of the transaction",
@@ -141,6 +151,29 @@ def get_import_editor_config(category_options, include_account_col=False):
         cfg["account_id"] = None
         cfg["account"] = st.column_config.TextColumn("Account", disabled=True, width="medium")
     return cfg
+
+
+def style_credit_column(df):
+    """
+    Returns a pandas Styler that highlights positive 'credit' amounts (credit > 0) in green.
+    Requires the 'credit' column to be non-editable (disabled=True) in st.data_editor.
+    """
+    if df is None or df.empty or "credit" not in df.columns:
+        return df
+
+    if df.size > int(pd.options.styler.render.max_elements):
+        pd.set_option("styler.render.max_elements", df.size + 1000)
+
+    def _credit_css(val):
+        try:
+            if pd.notna(val) and float(val) > 0:
+                return "color: #22c55e; font-weight: 600"
+        except (ValueError, TypeError):
+            pass
+        return ""
+
+    return df.style.map(_credit_css, subset=["credit"])
+
 
 def init_page(page_title_suffix=None):
     """

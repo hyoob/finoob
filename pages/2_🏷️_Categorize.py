@@ -42,7 +42,7 @@ if 'uncategorized_df' in st.session_state:
     editor_config = ui.get_categorization_editor_config(category_options)
     
     edited_df = st.data_editor(
-        st.session_state.uncategorized_df,
+        ui.style_credit_column(st.session_state.uncategorized_df),
         column_config=editor_config,
         hide_index=True,
     )

@@ -635,7 +635,7 @@ def _open_reimb_dialog_on_tick(
             "Tick one or more incoming credit transactions to link to the same expense (they will automatically be categorized as `Reimbursement`)."
         )
         edited_credits_df = st.data_editor(
-            credits_df,
+            ui.style_credit_column(credits_df),
             use_container_width=True,
             hide_index=True,
             num_rows="fixed",
@@ -646,7 +646,7 @@ def _open_reimb_dialog_on_tick(
                 "date": st.column_config.TextColumn("Date", width="small"),
                 "account": st.column_config.TextColumn("Account", width="small"),
                 "description": st.column_config.TextColumn("Description", width="large"),
-                "credit": st.column_config.NumberColumn("Credit (€)", format="%.2f €", width="small"),
+                "credit": st.column_config.NumberColumn("Credit (€)", format="%.2f €", width="small", disabled=True),
                 "category": st.column_config.TextColumn("Current Category", width="small"),
             },
             key=f"{key_prefix}_reimb_credits_editor_{target_rid}",
@@ -950,7 +950,7 @@ def _render_single_account_editor_and_save(new_transactions, warning, latest_bq_
             newly_done_cnt = 0
         else:
             edited_view_df = st.data_editor(
-                view_df,
+                ui.style_credit_column(view_df),
                 column_config=column_cfg,
                 num_rows="fixed",
                 use_container_width=True,
@@ -966,7 +966,7 @@ def _render_single_account_editor_and_save(new_transactions, warning, latest_bq_
         view_df = categorization_logic.sort_transactions_for_display(master_df, sort_mode)
         shown_row_ids = view_df["_row_id"].tolist()
         edited_view_df = st.data_editor(
-            view_df,
+            ui.style_credit_column(view_df),
             column_config=column_cfg,
             num_rows="dynamic",
             use_container_width=True,
@@ -1481,7 +1481,7 @@ if tab_sync is not None:
                                 newly_done_cnt = 0
                             else:
                                 edited_view_df = st.data_editor(
-                                    view_df,
+                                    ui.style_credit_column(view_df),
                                     column_config=col_cfg_multi,
                                     num_rows="fixed",
                                     use_container_width=True,
@@ -1501,7 +1501,7 @@ if tab_sync is not None:
                             )
                             shown_row_ids = view_df["_row_id"].tolist()
                             edited_view_df = st.data_editor(
-                                view_df,
+                                ui.style_credit_column(view_df),
                                 column_config=col_cfg_multi,
                                 num_rows="dynamic",
                                 use_container_width=True,
