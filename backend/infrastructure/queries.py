@@ -279,6 +279,65 @@ def get_net_worth_breakdown_query(table_id):
     """
 
 
+def get_yearly_finance_query(view_id):
+    return f"""
+        SELECT
+            year,
+            report_date,
+            credit,
+            debit,
+            profit,
+            savings_rate,
+            credit_per_month,
+            debit_per_month,
+            EOY_total_balance,
+            YoY_total_balance,
+            YoY_total_balance_percent
+        FROM `{view_id}`
+        ORDER BY year DESC
+    """
+
+
+def get_net_worth_sources_query(table_id):
+    return f"""
+        SELECT
+            month_string AS month,
+            CAST(year AS STRING) AS year,
+            wealth_source,
+            wealth_category,
+            ROUND(COALESCE(closing_balance, 0), 2) AS closing_balance
+        FROM `{table_id}`
+        WHERE month_string IS NOT NULL
+        ORDER BY month_string ASC, wealth_category ASC, wealth_source ASC
+    """
+
+
+def get_dashboard_transactions_query(tx_table_id, accounts_table_id):
+    return f"""
+        SELECT
+            t.transaction_number,
+            t.date,
+            FORMAT_DATE('%Y-%m', t.date) AS month,
+            CAST(EXTRACT(YEAR FROM t.date) AS STRING) AS year,
+            t.description,
+            ROUND(COALESCE(t.debit, 0), 2) AS debit,
+            ROUND(COALESCE(t.credit, 0), 2) AS credit,
+            ROUND(COALESCE(t.original_debit, t.debit, 0), 2) AS gross_debit,
+            COALESCE(NULLIF(TRIM(t.category), ''), 'TBD') AS category,
+            COALESCE(NULLIF(TRIM(t.label), ''), 'Unlabeled') AS label,
+            t.account_id,
+            COALESCE(a.account_name, t.account, t.account_id) AS account_name,
+            COALESCE(t.reimbursement.is_reimbursement, FALSE) AS is_reimbursement,
+            COALESCE(t.reimbursement.has_reimbursement, FALSE) AS has_reimbursement,
+            t.reimbursement.to_transaction_id AS to_transaction_id
+        FROM `{tx_table_id}` t
+        LEFT JOIN `{accounts_table_id}` a
+            ON t.account_id = a.account_id
+        WHERE COALESCE(t.transaction_type, '') != 'Info'
+        ORDER BY t.date DESC, t.transaction_number DESC
+    """
+
+
 def get_dim_loans_query(table_id):
     return f"""
         SELECT

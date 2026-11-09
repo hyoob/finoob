@@ -922,4 +922,709 @@ def get_accounts_editor_config():
     }
 
 
+# ==============================================================================
+# DASHBOARD 5-PILLAR ANALYTICAL RENDERING HELPERS
+# ==============================================================================
+def render_executive_pulse_cards(pulse, period_kpis):
+    """Renders the 2-row Executive Pulse KPI scorecard on Tab 1."""
+    if not pulse:
+        return
+
+    r1c1, r1c2, r1c3, r1c4 = st.columns(4)
+
+    nw_delta = None
+    if pulse.get("nw_mom") is not None:
+        mom_val = round(pulse["nw_mom"])
+        mom_pct = pulse.get("nw_mom_pct")
+        nw_delta = f"{mom_val:+,.0f} € ({mom_pct:+.1f}% MoM)" if mom_pct is not None else f"{mom_val:+,.0f} € MoM"
+
+    r1c1.metric(
+        f"Total Net Worth ({pulse.get('latest_nw_month', 'N/A')})",
+        f"€{round(pulse.get('total_nw', 0.0)):,.0f}",
+        delta=nw_delta,
+        help="End-of-month total Net Worth across all bank accounts, stocks, pension, loans, property, and mortgage.",
+    )
+
+    total_nw = pulse.get("total_nw", 0.0) or 1.0
+    liq_nw = pulse.get("liquid_nw", 0.0)
+    liq_pct = liq_nw / total_nw * 100.0 if total_nw > 0 else 0.0
+    r1c2.metric(
+        "Liquid & Market Net Worth",
+        f"€{round(liq_nw):,.0f}",
+        delta=f"{liq_pct:.1f}% of Total NW",
+        delta_color="off",
+        help="Cash + Savings + Vested Stocks (excludes illiquid Home Equity, Pension, and Loan Receivables).",
+    )
+
+    r1c3.metric(
+        "Cash & Savings Runway",
+        f"{pulse.get('cash_runway_months', 0.0):.1f} months",
+        delta=f"€{round(pulse.get('cash_and_savings', 0.0)):,.0f} liquid cash",
+        delta_color="off",
+        help=f"Based on trailing 6-month average Core Spend of €{round(pulse.get('t6m_avg_core_spend', 0.0)):,.0f}/mo.",
+    )
+
+    r1c4.metric(
+        "Total Liquid Runway (incl. Stocks)",
+        f"{pulse.get('liquid_runway_months', 0.0):.1f} months",
+        delta=f"€{round(pulse.get('t6m_avg_core_spend', 0.0)):,.0f}/mo 6M burn",
+        delta_color="off",
+        help="Months of trailing 6M Core Spend covered by Cash + Savings + Vested Stocks.",
+    )
+
+    r2c1, r2c2, r2c3, r2c4 = st.columns(4)
+
+    last_m = pulse.get("last_closed_month", "N/A")
+    last_prof = pulse.get("last_closed_profit", 0.0)
+    last_sr = pulse.get("last_closed_savings_rate", 0.0)
+    r2c1.metric(
+        f"Last Closed Month Profit ({last_m})",
+        f"€{round(last_prof):+,.0f}",
+        delta=f"{last_sr:.0f}% savings rate (12M avg: {pulse.get('t12m_savings_rate', 0.0):.0f}%)",
+        delta_color="normal" if last_prof >= 0 else "inverse",
+    )
+
+    last_spend = pulse.get("last_closed_core_spend", 0.0)
+    t12m_spend = pulse.get("t12m_avg_core_spend", 0.0)
+    spend_diff = last_spend - t12m_spend
+    r2c2.metric(
+        f"Last Closed Month Core Spend ({last_m})",
+        f"€{round(last_spend):,.0f}",
+        delta=f"{round(spend_diff):+,.0f} € vs 12M avg (€{round(t12m_spend):,.0f})",
+        delta_color="inverse",
+    )
+
+    mtd_m = pulse.get("mtd_month", "N/A")
+    mtd_d = pulse.get("mtd_day", 1)
+    mtd_spend = pulse.get("mtd_spend", 0.0)
+    pace_delta = pulse.get("mtd_pace_delta", 0.0)
+    r2c3.metric(
+        f"Latest Month Pace ({mtd_m}, Day {mtd_d})",
+        f"€{round(mtd_spend):,.0f}",
+        delta=f"{round(pace_delta):+,.0f} € vs 6M same-day avg",
+        delta_color="inverse",
+        help=f"Compares Core Spend through Day {mtd_d} of {mtd_m} against the prior 6-month average through Day {mtd_d} (€{round(pulse.get('prior_same_day_avg', 0.0)):,.0f}).",
+    )
+
+    if period_kpis:
+        r2c4.metric(
+            f"Selected Period Avg Profit ({period_kpis.get('months_count', 0)} mo)",
+            f"€{round(period_kpis.get('avg_profit', 0.0)):+,.0f}/mo",
+            delta=f"{round(period_kpis.get('weighted_savings_rate', 0.0)):.0f}% period savings rate",
+        )
+
+
+def render_hygiene_alerts_banner(pulse):
+    """Renders compact, actionable financial hygiene notifications on the Executive Pulse tab."""
+    if not pulse:
+        return
+
+    alerts = []
+    if pulse.get("tbd_recent_count", 0) > 0:
+        alerts.append(
+            f"🏷️ **{pulse['tbd_recent_count']} uncategorized (`TBD`) transaction(s)** in the last 12 months "
+            f"(`€{round(pulse['tbd_recent_amount']):,.0f}` — `{pulse['tbd_all_count']}` all-time). "
+            "Use **Rules & Backfill** to categorize them."
+        )
+    elif pulse.get("tbd_all_count", 0) > 0:
+        alerts.append(
+            f"🏷️ **{pulse['tbd_all_count']} historical `TBD` transaction(s)** (`€{round(pulse['tbd_all_amount']):,.0f}`) from earlier years."
+        )
+
+    if pulse.get("unlinked_reimb_count", 0) > 0:
+        alerts.append(
+            f"🤝 **{pulse['unlinked_reimb_count']} unlinked `Reimbursement` credit(s)** (`€{pulse['unlinked_reimb_amount']:,.2f}`) waiting to be linked to an expense."
+        )
+
+    for exp in pulse.get("expiring_accounts", []):
+        days = exp["days_left"]
+        if days < 0:
+            alerts.append(f"🔗 **{exp['account_name']}**: Open Banking consent expired `{abs(days)}` days ago.")
+        else:
+            alerts.append(f"🔗 **{exp['account_name']}**: Open Banking consent expires in `{days}` days.")
+
+    if alerts:
+        with st.expander(f"🩺 Financial Hygiene & Action Center ({len(alerts)} item{'s' if len(alerts) != 1 else ''})", expanded=False):
+            for item in alerts:
+                st.markdown(f"- {item}")
+
+
+def render_monthly_spend_bucket_chart(bucket_df, exclude_capital_lending=True):
+    """
+    Renders a stacked bar chart of monthly spending by Spend Bucket with a 6-month rolling average line.
+    """
+    if bucket_df is None or bucket_df.empty:
+        st.info("No spending data available for the selected filter.")
+        return
+
+    work_df = bucket_df.copy().sort_values("month", ascending=True).reset_index(drop=True)
+    work_df["month_label"] = pd.to_datetime(work_df["month"] + "-01").dt.strftime("%b %Y")
+
+    buckets = [
+        ("Fixed & Essential", 1),
+        ("Discretionary & Lifestyle", 2),
+        ("Giving", 3),
+    ]
+    if not exclude_capital_lending and "Capital & Lending" in work_df.columns:
+        buckets.append(("Capital & Lending", 4))
+
+    long_rows = []
+    for _, row in work_df.iterrows():
+        m_str = str(row["month"])
+        m_sort = int(m_str.replace("-", "")) if m_str.replace("-", "").isdigit() else 0
+        for b_name, b_order in buckets:
+            long_rows.append(
+                {
+                    "month": m_str,
+                    "month_sort": m_sort,
+                    "month_label": str(row["month_label"]),
+                    "bucket": b_name,
+                    "stack_order": int(b_order),
+                    "amount": float(row.get(b_name, 0.0) or 0.0),
+                    "total_spend": float(row.get("total_spend", 0.0) or 0.0),
+                    "rolling_6m_avg": float(row.get("rolling_6m_avg", 0.0) or 0.0),
+                    "Fixed & Essential": float(row.get("Fixed & Essential", 0.0) or 0.0),
+                    "Discretionary & Lifestyle": float(row.get("Discretionary & Lifestyle", 0.0) or 0.0),
+                    "Giving": float(row.get("Giving", 0.0) or 0.0),
+                }
+            )
+    bars_df = pd.DataFrame(long_rows)
+
+    domain = ["6M Rolling Avg", "Fixed & Essential", "Discretionary & Lifestyle", "Giving"]
+    colors = ["#ef4444", "#3b82f6", "#f59e0b", "#10b981"]
+    if not exclude_capital_lending:
+        domain.append("Capital & Lending")
+        colors.append("#8b5cf6")
+
+    tooltips = [
+        {"field": "month_label", "type": "nominal", "title": "Month"},
+        {"field": "total_spend", "type": "quantitative", "title": "Total Spend (€)", "format": ",.0f"},
+        {"field": "rolling_6m_avg", "type": "quantitative", "title": "6M Rolling Avg (€)", "format": ",.0f"},
+        {"field": "Fixed & Essential", "type": "quantitative", "title": "Fixed & Essential (€)", "format": ",.0f"},
+        {"field": "Discretionary & Lifestyle", "type": "quantitative", "title": "Discretionary (€)", "format": ",.0f"},
+        {"field": "Giving", "type": "quantitative", "title": "Giving (€)", "format": ",.0f"},
+    ]
+
+    x_enc = {
+        "field": "month_label",
+        "type": "nominal",
+        "sort": {"field": "month_sort", "op": "min", "order": "ascending"},
+        "title": None,
+        "axis": {"labelAngle": 0, "labelOverlap": "greedy", "labelPadding": 8},
+    }
+
+    spec = {
+        "height": 390,
+        "padding": {"top": 10, "bottom": 16, "left": 12, "right": 16},
+        "view": {"stroke": "transparent"},
+        "layer": [
+            {
+                "mark": {"type": "bar"},
+                "encoding": {
+                    "x": x_enc,
+                    "y": {
+                        "field": "amount",
+                        "type": "quantitative",
+                        "stack": "zero",
+                        "title": None,
+                        "axis": {"format": ",.0f", "minExtent": 60},
+                    },
+                    "color": {
+                        "field": "bucket",
+                        "type": "nominal",
+                        "scale": {"domain": domain, "range": colors},
+                        "legend": {"orient": "top", "direction": "horizontal", "title": None},
+                    },
+                    "order": {"field": "stack_order", "type": "quantitative", "sort": "ascending"},
+                    "tooltip": tooltips,
+                },
+            },
+            {
+                "transform": [
+                    {"filter": "datum.stack_order === 1"},
+                    {"calculate": "'6M Rolling Avg'", "as": "avg_series"},
+                ],
+                "mark": {"type": "line", "strokeWidth": 2.5, "strokeDash": [5, 3], "color": "#ef4444"},
+                "encoding": {
+                    "x": x_enc,
+                    "y": {"field": "rolling_6m_avg", "type": "quantitative"},
+                    "color": {
+                        "field": "avg_series",
+                        "type": "nominal",
+                        "scale": {"domain": domain, "range": colors},
+                    },
+                    "tooltip": tooltips,
+                },
+            },
+        ],
+    }
+    st.vega_lite_chart(bars_df, spec, use_container_width=True)
+
+
+def render_category_ranking_chart_and_table(cat_df):
+    """
+    Renders a horizontal bar comparison of Top Categories (Selected Period Monthly Avg vs 12M Avg)
+    and a full ranked category table.
+    """
+    if cat_df is None or cat_df.empty:
+        st.info("No category spending data available for the selected filter.")
+        return
+
+    top_n = cat_df.head(14).copy()
+    chart_rows = []
+    for idx, r in top_n.iterrows():
+        chart_rows.append(
+            {
+                "category": str(r["category"]),
+                "rank": int(idx),
+                "metric": "Selected Period Avg (€/mo)",
+                "amount": float(r["monthly_avg"]),
+                "net_spend": float(r["net_spend"]),
+                "share_pct": float(r["share_pct"]),
+            }
+        )
+        chart_rows.append(
+            {
+                "category": str(r["category"]),
+                "rank": int(idx),
+                "metric": "Trailing 12M Avg (€/mo)",
+                "amount": float(r["trailing_12m_avg"]),
+                "net_spend": float(r["net_spend"]),
+                "share_pct": float(r["share_pct"]),
+            }
+        )
+    chart_df = pd.DataFrame(chart_rows)
+
+    spec = {
+        "height": max(320, 26 * len(top_n)),
+        "view": {"stroke": "transparent"},
+        "mark": {"type": "bar", "cornerRadiusEnd": 3},
+        "encoding": {
+            "y": {
+                "field": "category",
+                "type": "nominal",
+                "sort": {"field": "rank", "op": "min", "order": "ascending"},
+                "title": None,
+                "axis": {"labelLimit": 180},
+            },
+            "yOffset": {"field": "metric", "type": "nominal"},
+            "x": {
+                "field": "amount",
+                "type": "quantitative",
+                "title": "Monthly Average (€/mo)",
+                "axis": {"format": ",.0f"},
+            },
+            "color": {
+                "field": "metric",
+                "type": "nominal",
+                "scale": {
+                    "domain": ["Selected Period Avg (€/mo)", "Trailing 12M Avg (€/mo)"],
+                    "range": ["#3b82f6", "#94a3b8"],
+                },
+                "legend": {"orient": "top", "title": None},
+            },
+            "tooltip": [
+                {"field": "category", "type": "nominal", "title": "Category"},
+                {"field": "metric", "type": "nominal", "title": "Metric"},
+                {"field": "amount", "type": "quantitative", "title": "Monthly Avg (€)", "format": ",.0f"},
+                {"field": "net_spend", "type": "quantitative", "title": "Period Total (€)", "format": ",.0f"},
+                {"field": "share_pct", "type": "quantitative", "title": "Share of Spend (%)", "format": ".1f"},
+            ],
+        },
+    }
+    st.vega_lite_chart(chart_df, spec, use_container_width=True)
+
+    st.dataframe(
+        cat_df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "category": st.column_config.TextColumn("Category", width="medium"),
+            "spend_bucket": st.column_config.TextColumn("Bucket", width="medium"),
+            "net_spend": st.column_config.NumberColumn("Net Spend (€)", format="€%.0f", width="small"),
+            "gross_spend": st.column_config.NumberColumn("Gross Spend (€)", format="€%.0f", width="small"),
+            "reimbursed_offset": st.column_config.NumberColumn("Reimbursed (€)", format="€%.0f", width="small"),
+            "monthly_avg": st.column_config.NumberColumn("Period Avg (€/mo)", format="€%.0f", width="small"),
+            "trailing_12m_avg": st.column_config.NumberColumn("12M Avg (€/mo)", format="€%.0f", width="small"),
+            "vs_12m_pct": st.column_config.NumberColumn(
+                "vs 12M Avg",
+                format="%+.1f%%",
+                help="How the selected period's monthly average compares to the trailing 12 closed months.",
+                width="small",
+            ),
+            "share_pct": st.column_config.ProgressColumn(
+                "Share of Spend",
+                format="%.1f%%",
+                min_value=0.0,
+                max_value=100.0,
+                width="small",
+            ),
+            "tx_count": st.column_config.NumberColumn("Tx Count", format="%d", width="small"),
+        },
+    )
+
+
+def render_category_heatmap(heatmap_df, granularity="month"):
+    """Renders a color-shaded Category x Period (Month or Year) pivot matrix."""
+    if heatmap_df is None or heatmap_df.empty:
+        st.info("No data available for category heatmap.")
+        return
+
+    period_cols = [c for c in heatmap_df.columns if c not in ("Category", "Total", "Monthly Avg")]
+    if heatmap_df.size > int(pd.options.styler.render.max_elements):
+        pd.set_option("styler.render.max_elements", heatmap_df.size + 1000)
+
+    def _heat_css(val, max_v):
+        try:
+            fval = float(val)
+            if fval <= 0 or max_v <= 0:
+                return "color: #94a3b8"
+            ratio = min(1.0, fval / max_v)
+            alpha = 0.08 + 0.42 * ratio
+            return f"background-color: rgba(59, 130, 246, {alpha:.2f}); font-weight: 500"
+        except Exception:
+            return ""
+
+    max_cell = float(heatmap_df[period_cols].max().max()) if period_cols else 1.0
+    styled = heatmap_df.style.map(lambda v: _heat_css(v, max_cell), subset=period_cols).format(
+        {c: (lambda v: "—" if pd.isna(v) or float(v) == 0 else f"€{round(float(v)):,.0f}") for c in period_cols + ["Total", "Monthly Avg"]}
+    )
+
+    st.caption(
+        f"Showing top categories across **{len(period_cols)} {'year(s)' if granularity == 'year' else 'month(s)'}**. "
+        "Darker blue cells highlight higher spending concentrations."
+    )
+    st.dataframe(
+        styled,
+        use_container_width=True,
+        hide_index=True,
+        height=min(620, 38 * (len(heatmap_df) + 1) + 12),
+    )
+
+
+def render_income_vs_spend_chart(monthly_df):
+    """
+    Renders a monthly grouped bar chart of Income vs. Expenses with a Net Profit line overlay.
+    """
+    if monthly_df is None or monthly_df.empty:
+        st.info("No monthly cash flow data available.")
+        return
+
+    work = monthly_df.copy().sort_values("month", ascending=True).reset_index(drop=True)
+    work["month_label"] = pd.to_datetime(work["month"] + "-01").dt.strftime("%b %Y")
+
+    rows = []
+    for _, r in work.iterrows():
+        m_str = str(r["month"])
+        m_sort = int(m_str.replace("-", "")) if m_str.replace("-", "").isdigit() else 0
+        inc = float(r.get("income", 0.0) or 0.0)
+        exp = float(r.get("expenses", 0.0) or 0.0)
+        prof = float(r.get("profit", 0.0) or 0.0)
+        sr = float(r.get("savings_rate", 0.0) or 0.0) if pd.notna(r.get("savings_rate")) else 0.0
+        for s_name in ["Income", "Expenses"]:
+            rows.append(
+                {
+                    "month": m_str,
+                    "month_sort": m_sort,
+                    "month_label": str(r["month_label"]),
+                    "series": s_name,
+                    "amount": inc if s_name == "Income" else exp,
+                    "income": inc,
+                    "expenses": exp,
+                    "profit": prof,
+                    "savings_rate": sr,
+                }
+            )
+    chart_df = pd.DataFrame(rows)
+
+    x_enc = {
+        "field": "month_label",
+        "type": "nominal",
+        "sort": {"field": "month_sort", "op": "min", "order": "ascending"},
+        "title": None,
+        "axis": {"labelAngle": 0, "labelOverlap": "greedy", "labelPadding": 8},
+    }
+    tooltips = [
+        {"field": "month_label", "type": "nominal", "title": "Month"},
+        {"field": "income", "type": "quantitative", "title": "Income (€)", "format": ",.0f"},
+        {"field": "expenses", "type": "quantitative", "title": "Expenses (€)", "format": ",.0f"},
+        {"field": "profit", "type": "quantitative", "title": "Net Profit (€)", "format": "+,.0f"},
+        {"field": "savings_rate", "type": "quantitative", "title": "Savings Rate (%)", "format": ".0f"},
+    ]
+
+    spec = {
+        "height": 390,
+        "view": {"stroke": "transparent"},
+        "layer": [
+            {
+                "mark": {"type": "bar", " opacity": 0.9},
+                "encoding": {
+                    "x": x_enc,
+                    "xOffset": {"field": "series", "type": "nominal"},
+                    "y": {
+                        "field": "amount",
+                        "type": "quantitative",
+                        "title": None,
+                        "axis": {"format": ",.0f", "minExtent": 60},
+                    },
+                    "color": {
+                        "field": "series",
+                        "type": "nominal",
+                        "scale": {
+                            "domain": ["Income", "Expenses", "Net Profit"],
+                            "range": ["#10b981", "#f43f5e", "#3b82f6"],
+                        },
+                        "legend": {"orient": "top", "title": None},
+                    },
+                    "tooltip": tooltips,
+                },
+            },
+            {
+                "transform": [
+                    {"filter": "datum.series === 'Income'"},
+                    {"calculate": "'Net Profit'", "as": "prof_series"},
+                ],
+                "mark": {"type": "line", "strokeWidth": 2.5, "point": True, "color": "#3b82f6"},
+                "encoding": {
+                    "x": x_enc,
+                    "y": {"field": "profit", "type": "quantitative"},
+                    "color": {
+                        "field": "prof_series",
+                        "type": "nominal",
+                        "scale": {
+                            "domain": ["Income", "Expenses", "Net Profit"],
+                            "range": ["#10b981", "#f43f5e", "#3b82f6"],
+                        },
+                    },
+                    "tooltip": tooltips,
+                },
+            },
+        ],
+    }
+    st.vega_lite_chart(chart_df, spec, use_container_width=True)
+
+
+def render_yearly_scorecard_table(yearly_df):
+    """Renders the Annual Financial Scorecard table (`2013`–`2026`) with green/red styling."""
+    if yearly_df is None or yearly_df.empty:
+        st.info("No annual financial data available.")
+        return
+
+    cols = [
+        "year",
+        "income",
+        "expenses",
+        "capital_outflows",
+        "profit",
+        "savings_rate",
+        "avg_monthly_income",
+        "avg_monthly_spend",
+        "net_worth_eoy",
+        "net_worth_yoy_change",
+        "net_worth_yoy_pct",
+    ]
+    view_df = yearly_df[[c for c in cols if c in yearly_df.columns]].copy()
+
+    def _pos_neg_css(val):
+        try:
+            if pd.notna(val):
+                fval = float(val)
+                if fval > 0:
+                    return "color: #22c55e; font-weight: 600"
+                if fval < 0:
+                    return "color: #ef4444; font-weight: 600"
+        except Exception:
+            pass
+        return ""
+
+    styled = (
+        view_df.style.map(
+            _pos_neg_css,
+            subset=["profit", "savings_rate", "net_worth_yoy_change", "net_worth_yoy_pct"],
+        )
+        .format(
+            {
+                "income": lambda v: "—" if pd.isna(v) else f"€{round(float(v)):,.0f}",
+                "expenses": lambda v: "—" if pd.isna(v) else f"€{round(float(v)):,.0f}",
+                "capital_outflows": lambda v: "—" if pd.isna(v) or float(v) == 0 else f"€{round(float(v)):,.0f}",
+                "profit": lambda v: "—" if pd.isna(v) else f"{round(float(v)):+,.0f} €",
+                "savings_rate": lambda v: "—" if pd.isna(v) else f"{float(v):.1f}%",
+                "avg_monthly_income": lambda v: "—" if pd.isna(v) else f"€{round(float(v)):,.0f}/mo",
+                "avg_monthly_spend": lambda v: "—" if pd.isna(v) else f"€{round(float(v)):,.0f}/mo",
+                "net_worth_eoy": lambda v: "—" if pd.isna(v) else f"€{round(float(v)):,.0f}",
+                "net_worth_yoy_change": lambda v: "—" if pd.isna(v) else f"{round(float(v)):+,.0f} €",
+                "net_worth_yoy_pct": lambda v: "—" if pd.isna(v) else f"{float(v):+.1f}%",
+            }
+        )
+    )
+
+    st.dataframe(
+        styled,
+        use_container_width=True,
+        hide_index=True,
+        height=min(620, 38 * (len(view_df) + 1) + 12),
+        column_config={
+            "year": st.column_config.TextColumn("Year", width="small"),
+            "income": st.column_config.NumberColumn("Total Income", width="small"),
+            "expenses": st.column_config.NumberColumn("Spend (Selected Mode)", width="small"),
+            "capital_outflows": st.column_config.NumberColumn(
+                "Capital & Lending",
+                help="One-off capital outflows (e.g. House purchase, Loan disbursements).",
+                width="small",
+            ),
+            "profit": st.column_config.NumberColumn("Net Profit", width="small"),
+            "savings_rate": st.column_config.NumberColumn("Savings Rate", width="small"),
+            "avg_monthly_income": st.column_config.NumberColumn("Avg Income/mo", width="small"),
+            "avg_monthly_spend": st.column_config.NumberColumn("Avg Spend/mo", width="small"),
+            "net_worth_eoy": st.column_config.NumberColumn("EOY Net Worth", width="small"),
+            "net_worth_yoy_change": st.column_config.NumberColumn("NW Change YoY", width="small"),
+            "net_worth_yoy_pct": st.column_config.NumberColumn("NW Growth YoY", width="small"),
+        },
+    )
+
+
+def render_net_worth_projection_chart(proj_df):
+    """Renders the 1-10 Year Projected Stacked Net Worth chart + Liquid vs Mortgage crossover."""
+    if proj_df is None or proj_df.empty:
+        st.info("No projection data available.")
+        return
+
+    # Sample every 3 months if > 48 months for crisp bar rendering, or annual/semi-annual
+    step = 3 if len(proj_df) > 48 else 1
+    work = proj_df[proj_df["step_month"] % step == 0].copy().reset_index(drop=True)
+    work["month_label"] = pd.to_datetime(work["month"] + "-01").dt.strftime("%b %Y")
+
+    stack_cols = [
+        ("equity_stocks", 1),
+        ("pension", 2),
+        ("receivables_loans", 3),
+        ("cash_and_savings", 4),
+        ("home_equity", 5),
+    ]
+    long_rows = []
+    for _, row in work.iterrows():
+        m_str = str(row["month"])
+        m_sort = int(m_str.replace("-", "")) if m_str.replace("-", "").isdigit() else 0
+        for comp_name, stack_order in stack_cols:
+            long_rows.append(
+                {
+                    "month": m_str,
+                    "month_sort": m_sort,
+                    "month_label": str(row["month_label"]),
+                    "series": comp_name,
+                    "stack_order": int(stack_order),
+                    "amount": float(row.get(comp_name, 0.0) or 0.0),
+                    "total_net_worth": float(row.get("total_net_worth", 0.0) or 0.0),
+                    "remaining_mortgage": float(row.get("remaining_mortgage", 0.0) or 0.0),
+                    "liquid_and_invested": float(row.get("liquid_and_invested", 0.0) or 0.0),
+                    "equity_stocks": float(row.get("equity_stocks", 0.0) or 0.0),
+                    "pension": float(row.get("pension", 0.0) or 0.0),
+                    "receivables_loans": float(row.get("receivables_loans", 0.0) or 0.0),
+                    "cash_and_savings": float(row.get("cash_and_savings", 0.0) or 0.0),
+                    "home_equity": float(row.get("home_equity", 0.0) or 0.0),
+                }
+            )
+    bars_df = pd.DataFrame(long_rows)
+
+    legend_domain = [
+        "total_net_worth",
+        "remaining_mortgage",
+        "equity_stocks",
+        "pension",
+        "receivables_loans",
+        "cash_and_savings",
+        "home_equity",
+    ]
+    legend_range = [
+        "#3b78e7",
+        "#ef4444",
+        "#12b5cb",
+        "#e52592",
+        "#f06b22",
+        "#f9ab00",
+        "#7cb342",
+    ]
+    tooltips = [
+        {"field": "month_label", "type": "nominal", "title": "Month"},
+        {"field": "total_net_worth", "type": "quantitative", "title": "Projected Net Worth (€)", "format": ",.0f"},
+        {"field": "liquid_and_invested", "type": "quantitative", "title": "Liquid + Stocks (€)", "format": ",.0f"},
+        {"field": "remaining_mortgage", "type": "quantitative", "title": "Remaining Mortgage (€)", "format": ",.0f"},
+        {"field": "home_equity", "type": "quantitative", "title": "Net Home Equity (€)", "format": ",.0f"},
+        {"field": "cash_and_savings", "type": "quantitative", "title": "Cash & Savings (€)", "format": ",.0f"},
+        {"field": "equity_stocks", "type": "quantitative", "title": "Stocks / Equity (€)", "format": ",.0f"},
+        {"field": "pension", "type": "quantitative", "title": "Pension (€)", "format": ",.0f"},
+    ]
+    x_enc = {
+        "field": "month_label",
+        "type": "nominal",
+        "sort": {"field": "month_sort", "op": "min", "order": "ascending"},
+        "title": None,
+        "axis": {"labelAngle": 0, "labelOverlap": "greedy", "labelPadding": 8},
+    }
+
+    spec = {
+        "height": 420,
+        "view": {"stroke": "transparent"},
+        "layer": [
+            {
+                "mark": {"type": "bar"},
+                "encoding": {
+                    "x": x_enc,
+                    "y": {
+                        "field": "amount",
+                        "type": "quantitative",
+                        "stack": "zero",
+                        "title": None,
+                        "axis": {"format": ",.0f", "minExtent": 65},
+                    },
+                    "color": {
+                        "field": "series",
+                        "type": "nominal",
+                        "scale": {"domain": legend_domain, "range": legend_range},
+                        "legend": {"orient": "top", "direction": "horizontal", "title": None},
+                    },
+                    "order": {"field": "stack_order", "type": "quantitative", "sort": "ascending"},
+                    "tooltip": tooltips,
+                },
+            },
+            {
+                "transform": [
+                    {"filter": "datum.stack_order === 1"},
+                    {"calculate": "'total_net_worth'", "as": "nw_line"},
+                ],
+                "mark": {"type": "line", "strokeWidth": 2.5, "color": "#3b78e7"},
+                "encoding": {
+                    "x": x_enc,
+                    "y": {"field": "total_net_worth", "type": "quantitative"},
+                    "color": {
+                        "field": "nw_line",
+                        "type": "nominal",
+                        "scale": {"domain": legend_domain, "range": legend_range},
+                    },
+                    "tooltip": tooltips,
+                },
+            },
+            {
+                "transform": [
+                    {"filter": "datum.stack_order === 1"},
+                    {"calculate": "'remaining_mortgage'", "as": "mort_line"},
+                ],
+                "mark": {"type": "line", "strokeWidth": 2.0, "strokeDash": [5, 3], "color": "#ef4444"},
+                "encoding": {
+                    "x": x_enc,
+                    "y": {"field": "remaining_mortgage", "type": "quantitative"},
+                    "color": {
+                        "field": "mort_line",
+                        "type": "nominal",
+                        "scale": {"domain": legend_domain, "range": legend_range},
+                    },
+                    "tooltip": tooltips,
+                },
+            },
+        ],
+    }
+    st.vega_lite_chart(bars_df, spec, use_container_width=True)
+
+
+
 
