@@ -14,7 +14,7 @@ if "_liabilities_modules_reloaded_v1" not in st.session_state:
     st.session_state["_liabilities_modules_reloaded_v1"] = True
 
 ui.init_page("Liabilities")
-st.title("💳 Liabilities")
+st.title("📉 Liabilities")
 st.caption(
     "Manage your official mortgage dimension table (`finoob.liabilities.dim_mortgage_terms`) "
     "or run read-only what-if payoff simulations in the Sandbox tab."

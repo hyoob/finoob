@@ -16,8 +16,8 @@ if "_assets_modules_reloaded_v1" not in st.session_state:
     importlib.reload(ui)
     st.session_state["_assets_modules_reloaded_v1"] = True
 
-ui.init_page("Assets & Loans")
-st.title("🏛️ Assets & Loans")
+ui.init_page("Assets & Investments")
+st.title("📈 Assets & Investments")
 st.caption(
     "Manage native BigQuery asset & receivable dimension tables (`dim_loans` and `dim_property_assets`) "
     "and inspect read-only Stocks & Pension records."

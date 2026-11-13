@@ -16,10 +16,10 @@ if "_accounts_modules_reloaded_v2" not in st.session_state:
     importlib.reload(ui)
     st.session_state["_accounts_modules_reloaded_v2"] = True
 
-ui.init_page("Accounts & Sync")
+ui.init_page("Cash & Accounts")
 categories, category_options, account_map, table_id = app_service.load_global_context()
 
-st.title("🏦 Accounts & Sync")
+st.title("💳 Cash & Accounts")
 st.caption(
     f"Account metadata is managed in `{config.ACCOUNTS_TABLE_ID}` and balances are resolved dynamically "
     f"from the latest transaction in `{table_id}`."
