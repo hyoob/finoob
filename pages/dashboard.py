@@ -1,3 +1,4 @@
+import importlib
 import pandas as pd
 import streamlit as st
 import config
@@ -5,6 +6,15 @@ import ui
 from backend.domain import dashboard_logic
 from backend.services import dashboard_service
 
+
+if "_dashboard_modules_reloaded_v5" not in st.session_state:
+    importlib.reload(config)
+    importlib.reload(dashboard_logic)
+    importlib.reload(dashboard_service)
+    importlib.reload(ui)
+    st.cache_data.clear()
+    st.session_state.pop("dashboard_analytics_bundle", None)
+    st.session_state["_dashboard_modules_reloaded_v5"] = True
 
 ui.init_page("Dashboard")
 st.title("📊 Financial Dashboard & Insights")
@@ -180,23 +190,27 @@ def _render_wealth_bridge_fragment(nw_sources_df, shown_months):
     )
 
     st.vega_lite_chart(
-        bridge_df,
-        {
+        spec={
             "height": 260,
             "view": {"stroke": "transparent"},
-            "mark": {"type": "bar", "cornerRadiusEnd": 3},
-            "encoding": {
-                "y": {"field": "driver", "type": "nominal", "sort": None, "title": None, "axis": {"labelLimit": 180}},
-                "x": {"field": "delta", "type": "quantitative", "title": "Net Worth Impact (€)", "axis": {"format": "+,.0f"}},
-                "color": {
-                    "condition": {"test": "datum.delta >= 0", "value": "#10b981"},
-                    "value": "#ef4444",
-                },
-                "tooltip": [
-                    {"field": "driver", "type": "nominal", "title": "Wealth Driver"},
-                    {"field": "delta", "type": "quantitative", "title": "Change (€)", "format": "+,.0f"},
-                ],
-            },
+            "layer": [
+                {
+                    "data": {"values": bridge_df.to_dict("records")},
+                    "mark": {"type": "bar", "cornerRadiusEnd": 3},
+                    "encoding": {
+                        "y": {"field": "driver", "type": "nominal", "sort": None, "title": None, "axis": {"labelLimit": 180}},
+                        "x": {"field": "delta", "type": "quantitative", "title": "Net Worth Impact (€)", "axis": {"format": "+,.0f"}},
+                        "color": {
+                            "condition": {"test": "datum.delta >= 0", "value": "#10b981"},
+                            "value": "#ef4444",
+                        },
+                        "tooltip": [
+                            {"field": "driver", "type": "nominal", "title": "Wealth Driver"},
+                            {"field": "delta", "type": "quantitative", "title": "Change (€)", "format": "+,.0f"},
+                        ],
+                    },
+                }
+            ],
         },
         use_container_width=True,
     )
@@ -418,9 +432,9 @@ with ctrl_col3:
 with ctrl_col4:
     st.write("")
     exclude_capital = st.toggle(
-        "Exclude Capital & Lending (House, Loan)",
+        "Exclude Capital & Lending",
         value=True,
-        help="When enabled, one-off capital outflows (`House` purchase costs, `Loan` disbursements) are excluded from regular living expenses and core savings rate.",
+        help="When enabled, non-operating capital outflows (`House` purchase/renovation costs, `Loan` disbursements, lump-sum `House Mortgage Overpayment`, and major asset purchases like `Honda Jazz`) are excluded from regular living expenses and core savings rate.",
         key="dash_exclude_capital",
     )
 
@@ -548,11 +562,47 @@ with tab_pulse:
 
     st.divider()
     st.subheader("📅 Monthly Financial Performance & Net Worth")
-    mode_label = "Core Spend (excluding `House` & `Loan` capital flows)" if exclude_capital else "Gross Spend (all non-transfer debits)"
+    mode_label = (
+        "Core Operating Spend (excluding Capital & Lending outflows)"
+        if exclude_capital
+        else "Gross Spend (including Capital & Lending outflows)"
+    )
     st.caption(
-        f"Currently displaying **{mode_label}**. Internal self-transfers (`Transfer from/to self`) and `Reimbursement` rows are excluded."
+        f"Currently displaying **{mode_label}**. The **Capital & Lending** column shows the non-operating capital outflows in each month. "
+        "Internal self-transfers (`Transfer from/to self`) and `Reimbursement` rows are always excluded."
     )
     ui.render_monthly_stats_table(filtered_df)
+
+    if not tx_df.empty:
+        cap_period_df = tx_df[
+            (~tx_df["is_internal"])
+            & (tx_df["is_capital_expense"])
+            & (tx_df["debit"] > 0)
+            & (tx_df["month"].isin(shown_months))
+        ].sort_values(["date", "debit"], ascending=[False, False]).copy()
+        cap_total_eur = float(cap_period_df["debit"].sum()) if not cap_period_df.empty else 0.0
+        status_tag = "Excluded from Core Spend" if exclude_capital else "Currently Included in Spend"
+        with st.expander(
+            f"🏗️ Inspect Capital & Lending Outflows in Selected Period — {len(cap_period_df)} tx (€{cap_total_eur:,.0f} • {status_tag})",
+            expanded=False,
+        ):
+            if cap_period_df.empty:
+                st.info("No Capital & Lending outflows occurred during the selected period.")
+            else:
+                st.dataframe(
+                    cap_period_df[["date", "month", "category", "label", "description", "debit", "account_name"]],
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "date": st.column_config.DateColumn("Date", format="YYYY-MM-DD", width="small"),
+                        "month": st.column_config.TextColumn("Month", width="small"),
+                        "category": st.column_config.TextColumn("Category", width="small"),
+                        "label": st.column_config.TextColumn("Label", width="medium"),
+                        "description": st.column_config.TextColumn("Description", width="large"),
+                        "debit": st.column_config.NumberColumn("Amount (€)", format="euro", step=0.01, width="small"),
+                        "account_name": st.column_config.TextColumn("Account", width="small"),
+                    },
+                )
 
 
 # ==============================================================================

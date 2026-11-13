@@ -32,6 +32,11 @@ CAPITAL_LENDING_EXPENSE_CATEGORIES = {
     "Loan",
 }
 
+CAPITAL_LENDING_EXPENSE_LABELS = {
+    "House Mortgage Overpayment",
+    "Honda Jazz",
+}
+
 CAPITAL_LENDING_INCOME_CATEGORIES = {
     "Loan repayment",
     "Loan payback",
@@ -275,10 +280,16 @@ def prepare_dashboard_transactions_df(rows, bucket_map=None):
     df["is_internal"] = df["category"].isin(INTERNAL_NON_CASHFLOW_CATEGORIES) | (
         df["category"].map(lambda c: norm_buckets.get(c) == "Internal")
     )
+    is_cap_label = (
+        df["label"].isin(CAPITAL_LENDING_EXPENSE_LABELS)
+        | df["label"].str.lower().str.contains("overpayment", na=False)
+    )
     df["is_capital_expense"] = (
         df["category"].isin(CAPITAL_LENDING_EXPENSE_CATEGORIES)
         | (df["spend_bucket"] == SPEND_BUCKET_CAPITAL)
+        | is_cap_label
     )
+    df.loc[df["is_capital_expense"], "spend_bucket"] = SPEND_BUCKET_CAPITAL
 
     df["account_id"] = df["account_id"].fillna("").astype(str)
     df["account_name"] = df["account_name"].fillna(df["account_id"]).astype(str)

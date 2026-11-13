@@ -608,6 +608,7 @@ def render_monthly_stats_table(df):
         "month",
         "income",
         "expenses",
+        "capital_outflows",
         "profit",
         "savings_rate",
         "net_worth",
@@ -640,6 +641,7 @@ def render_monthly_stats_table(df):
             {
                 "income": lambda v: "—" if pd.isna(v) else f"€{round(float(v)):,.0f}",
                 "expenses": lambda v: "—" if pd.isna(v) else f"€{round(float(v)):,.0f}",
+                "capital_outflows": lambda v: "—" if pd.isna(v) or float(v) == 0 else f"€{round(float(v)):,.0f}",
                 "profit": lambda v: "—" if pd.isna(v) else f"{round(float(v)):+,.0f} €",
                 "savings_rate": lambda v: "—" if pd.isna(v) else f"{round(float(v)):.0f}%",
                 "net_worth": lambda v: "—" if pd.isna(v) else f"€{round(float(v)):,.0f}",
@@ -656,18 +658,23 @@ def render_monthly_stats_table(df):
         height=min(700, 38 * (len(view_df) + 1) + 12),
         column_config={
             "month": st.column_config.TextColumn("Month", width="small"),
-            "income": st.column_config.NumberColumn("Income", width="medium"),
-            "expenses": st.column_config.NumberColumn("Expenses", width="medium"),
-            "profit": st.column_config.NumberColumn("Profit", width="medium"),
+            "income": st.column_config.NumberColumn("Income", width="small"),
+            "expenses": st.column_config.NumberColumn("Spend (Selected Mode)", width="small"),
+            "capital_outflows": st.column_config.NumberColumn(
+                "Capital & Lending",
+                help="Non-operating capital outflows in that month (House purchase/renovation, Loans, Mortgage Overpayments, Car purchase).",
+                width="small",
+            ),
+            "profit": st.column_config.NumberColumn("Profit", width="small"),
             "savings_rate": st.column_config.NumberColumn(
                 "Savings Rate",
                 help="Profit / Income (%)",
                 width="small",
             ),
-            "net_worth": st.column_config.NumberColumn("Net Worth", width="medium"),
+            "net_worth": st.column_config.NumberColumn("Net Worth", width="small"),
             "net_worth_change_mom": st.column_config.NumberColumn(
                 "Net Worth Change MoM",
-                width="medium",
+                width="small",
             ),
             "net_worth_growth_mom_pct": st.column_config.NumberColumn(
                 "Net Worth Growth % MoM",
@@ -771,12 +778,14 @@ def render_net_worth_chart(nw_df):
         "minExtent": 65,
     }
 
+    records = bars_df.to_dict("records")
     spec = {
         "height": 430,
         "padding": {"top": 12, "bottom": 20, "left": 12, "right": 16},
         "view": {"stroke": "transparent"},
         "layer": [
             {
+                "data": {"values": records},
                 "mark": {"type": "bar"},
                 "encoding": {
                     "x": x_encoding,
@@ -803,6 +812,7 @@ def render_net_worth_chart(nw_df):
                 },
             },
             {
+                "data": {"values": records},
                 "transform": [
                     {"filter": "datum.stack_order === 1"},
                     {"calculate": "'total_net_worth'", "as": "line_series"},
@@ -827,7 +837,7 @@ def render_net_worth_chart(nw_df):
         ],
     }
 
-    st.vega_lite_chart(bars_df, spec, use_container_width=True)
+    st.vega_lite_chart(spec=spec, use_container_width=True)
 
 
 def get_loans_editor_config():
@@ -1159,12 +1169,14 @@ def render_monthly_spend_bucket_chart(bucket_df, exclude_capital_lending=True):
         "axis": {"labelAngle": 0, "labelOverlap": "greedy", "labelPadding": 8},
     }
 
+    records = bars_df.to_dict("records")
     spec = {
         "height": 390,
         "padding": {"top": 10, "bottom": 16, "left": 12, "right": 16},
         "view": {"stroke": "transparent"},
         "layer": [
             {
+                "data": {"values": records},
                 "mark": {"type": "bar"},
                 "encoding": {
                     "x": x_enc,
@@ -1186,6 +1198,7 @@ def render_monthly_spend_bucket_chart(bucket_df, exclude_capital_lending=True):
                 },
             },
             {
+                "data": {"values": records},
                 "transform": [
                     {"filter": "datum.stack_order === 1"},
                     {"calculate": "'6M Rolling Avg'", "as": "avg_series"},
@@ -1204,7 +1217,7 @@ def render_monthly_spend_bucket_chart(bucket_df, exclude_capital_lending=True):
             },
         ],
     }
-    st.vega_lite_chart(bars_df, spec, use_container_width=True)
+    st.vega_lite_chart(spec=spec, use_container_width=True)
 
 
 def render_category_ranking_chart_and_table(cat_df):
@@ -1241,44 +1254,50 @@ def render_category_ranking_chart_and_table(cat_df):
         )
     chart_df = pd.DataFrame(chart_rows)
 
+    records = chart_df.to_dict("records")
     spec = {
         "height": max(320, 26 * len(top_n)),
         "view": {"stroke": "transparent"},
-        "mark": {"type": "bar", "cornerRadiusEnd": 3},
-        "encoding": {
-            "y": {
-                "field": "category",
-                "type": "nominal",
-                "sort": {"field": "rank", "op": "min", "order": "ascending"},
-                "title": None,
-                "axis": {"labelLimit": 180},
-            },
-            "yOffset": {"field": "metric", "type": "nominal"},
-            "x": {
-                "field": "amount",
-                "type": "quantitative",
-                "title": "Monthly Average (€/mo)",
-                "axis": {"format": ",.0f"},
-            },
-            "color": {
-                "field": "metric",
-                "type": "nominal",
-                "scale": {
-                    "domain": ["Selected Period Avg (€/mo)", "Trailing 12M Avg (€/mo)"],
-                    "range": ["#3b82f6", "#94a3b8"],
+        "layer": [
+            {
+                "data": {"values": records},
+                "mark": {"type": "bar", "cornerRadiusEnd": 3},
+                "encoding": {
+                    "y": {
+                        "field": "category",
+                        "type": "nominal",
+                        "sort": {"field": "rank", "op": "min", "order": "ascending"},
+                        "title": None,
+                        "axis": {"labelLimit": 180},
+                    },
+                    "yOffset": {"field": "metric", "type": "nominal"},
+                    "x": {
+                        "field": "amount",
+                        "type": "quantitative",
+                        "title": "Monthly Average (€/mo)",
+                        "axis": {"format": ",.0f"},
+                    },
+                    "color": {
+                        "field": "metric",
+                        "type": "nominal",
+                        "scale": {
+                            "domain": ["Selected Period Avg (€/mo)", "Trailing 12M Avg (€/mo)"],
+                            "range": ["#3b82f6", "#94a3b8"],
+                        },
+                        "legend": {"orient": "top", "title": None},
+                    },
+                    "tooltip": [
+                        {"field": "category", "type": "nominal", "title": "Category"},
+                        {"field": "metric", "type": "nominal", "title": "Metric"},
+                        {"field": "amount", "type": "quantitative", "title": "Monthly Avg (€)", "format": ",.0f"},
+                        {"field": "net_spend", "type": "quantitative", "title": "Period Total (€)", "format": ",.0f"},
+                        {"field": "share_pct", "type": "quantitative", "title": "Share of Spend (%)", "format": ".1f"},
+                    ],
                 },
-                "legend": {"orient": "top", "title": None},
-            },
-            "tooltip": [
-                {"field": "category", "type": "nominal", "title": "Category"},
-                {"field": "metric", "type": "nominal", "title": "Metric"},
-                {"field": "amount", "type": "quantitative", "title": "Monthly Avg (€)", "format": ",.0f"},
-                {"field": "net_spend", "type": "quantitative", "title": "Period Total (€)", "format": ",.0f"},
-                {"field": "share_pct", "type": "quantitative", "title": "Share of Spend (%)", "format": ".1f"},
-            ],
-        },
+            }
+        ],
     }
-    st.vega_lite_chart(chart_df, spec, use_container_width=True)
+    st.vega_lite_chart(spec=spec, use_container_width=True)
 
     st.dataframe(
         cat_df,
@@ -1398,12 +1417,14 @@ def render_income_vs_spend_chart(monthly_df):
         {"field": "savings_rate", "type": "quantitative", "title": "Savings Rate (%)", "format": ".0f"},
     ]
 
+    records = chart_df.to_dict("records")
     spec = {
         "height": 390,
         "view": {"stroke": "transparent"},
         "layer": [
             {
-                "mark": {"type": "bar", " opacity": 0.9},
+                "data": {"values": records},
+                "mark": {"type": "bar", "opacity": 0.9},
                 "encoding": {
                     "x": x_enc,
                     "xOffset": {"field": "series", "type": "nominal"},
@@ -1426,6 +1447,7 @@ def render_income_vs_spend_chart(monthly_df):
                 },
             },
             {
+                "data": {"values": records},
                 "transform": [
                     {"filter": "datum.series === 'Income'"},
                     {"calculate": "'Net Profit'", "as": "prof_series"},
@@ -1447,7 +1469,7 @@ def render_income_vs_spend_chart(monthly_df):
             },
         ],
     }
-    st.vega_lite_chart(chart_df, spec, use_container_width=True)
+    st.vega_lite_chart(spec=spec, use_container_width=True)
 
 
 def render_yearly_scorecard_table(yearly_df):
@@ -1608,11 +1630,13 @@ def render_net_worth_projection_chart(proj_df):
         "axis": {"labelAngle": 0, "labelOverlap": "greedy", "labelPadding": 8},
     }
 
+    records = bars_df.to_dict("records")
     spec = {
         "height": 420,
         "view": {"stroke": "transparent"},
         "layer": [
             {
+                "data": {"values": records},
                 "mark": {"type": "bar"},
                 "encoding": {
                     "x": x_enc,
@@ -1634,6 +1658,7 @@ def render_net_worth_projection_chart(proj_df):
                 },
             },
             {
+                "data": {"values": records},
                 "transform": [
                     {"filter": "datum.stack_order === 1"},
                     {"calculate": "'total_net_worth'", "as": "nw_line"},
@@ -1651,6 +1676,7 @@ def render_net_worth_projection_chart(proj_df):
                 },
             },
             {
+                "data": {"values": records},
                 "transform": [
                     {"filter": "datum.stack_order === 1"},
                     {"calculate": "'remaining_mortgage'", "as": "mort_line"},
@@ -1669,7 +1695,7 @@ def render_net_worth_projection_chart(proj_df):
             },
         ],
     }
-    st.vega_lite_chart(bars_df, spec, use_container_width=True)
+    st.vega_lite_chart(spec=spec, use_container_width=True)
 
 
 
