@@ -180,6 +180,31 @@ def update_net_worth_table():
         return True, None
     return execute_procedure(config.NET_WORTH_PROCEDURE)
 
+
+def sync_dev_sandbox_from_prod():
+    """
+    Re-clones all 6 production tables into `finoob.dev.*` using BigQuery zero-copy CLONE.
+    Returns (success: bool, message: str).
+    """
+    client = get_client()
+    clone_pairs = [
+        (config.TRANSACTIONS_PROD_TABLE_ID, config.TRANSACTIONS_DEV_TABLE_ID),
+        (config.ACCOUNTS_PROD_TABLE_ID, config.ACCOUNTS_DEV_TABLE_ID),
+        (config.CATEGORIES_PROD_TABLE_ID, config.CATEGORIES_DEV_TABLE_ID),
+        (config.LOANS_PROD_TABLE_ID, config.LOANS_DEV_TABLE_ID),
+        (config.PROPERTY_ASSETS_PROD_TABLE_ID, config.PROPERTY_ASSETS_DEV_TABLE_ID),
+        (config.MORTGAGE_PROD_TABLE_ID, config.MORTGAGE_DEV_TABLE_ID),
+    ]
+    statements = [
+        f"CREATE OR REPLACE TABLE `{dev_tbl}` CLONE `{prod_tbl}`;"
+        for prod_tbl, dev_tbl in clone_pairs
+    ]
+    try:
+        client.query("\n".join(statements)).result()
+        return True, f"Cloned all {len(clone_pairs)} prod tables into `finoob.dev.*`."
+    except Exception as e:
+        return False, str(e)
+
 def save_mortgage_updates(table_id, edited_df):
     """
     Updates Mortgage Terms table using a MERGE statement.

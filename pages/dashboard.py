@@ -370,34 +370,52 @@ if raw_monthly_df.empty:
     st.stop()
 
 # --- Global Top Controls Bar ---
-ctrl_col1, ctrl_col2, ctrl_col3, ctrl_col4 = st.columns([1.4, 1.5, 1.3, 1.0])
+ctrl_col1, ctrl_col2, ctrl_col3, ctrl_col4 = st.columns([1.35, 1.5, 1.3, 1.25])
 
+available_months = raw_monthly_df["month"].dropna().astype(str).unique().tolist()
 available_years = sorted(raw_monthly_df["year"].dropna().unique().tolist(), reverse=True)
+current_ym = pd.Timestamp.now().strftime("%Y-%m")
+closed_month_options = [m for m in available_months if m < current_ym]
+default_single_month = closed_month_options[:1] if closed_month_options else available_months[:1]
 
 with ctrl_col1:
     period_preset = st.selectbox(
         "Time Horizon",
         options=[
             "Last 12 Months",
+            "Last Closed Month",
+            "Current Month (MTD)",
+            "Last 3 Months",
+            "Last 6 Months",
             "Last 24 Months",
             "Year to Date (Current Year)",
             "All History",
-            "Custom Years",
+            "Custom Month(s)",
+            "Custom Year(s)",
         ],
         index=0,
         key="dash_period_preset",
     )
 
 with ctrl_col2:
+    selected_months = st.multiselect(
+        "Select Month(s)",
+        options=available_months,
+        default=default_single_month,
+        disabled=(period_preset != "Custom Month(s)"),
+        key="dash_selected_months",
+    )
+
+with ctrl_col3:
     selected_years = st.multiselect(
         "Select Year(s)",
         options=available_years,
         default=available_years[:2] if len(available_years) >= 2 else available_years,
-        disabled=(period_preset != "Custom Years"),
+        disabled=(period_preset != "Custom Year(s)"),
         key="dash_selected_years",
     )
 
-with ctrl_col3:
+with ctrl_col4:
     st.write("")
     exclude_capital = st.toggle(
         "Exclude Capital & Lending (House, Loan)",
@@ -406,38 +424,32 @@ with ctrl_col3:
         key="dash_exclude_capital",
     )
 
-with ctrl_col4:
-    st.write("")
-    if st.button(
-        "🔄 Refresh Net Worth",
-        use_container_width=True,
-        help="Runs `reporting.sp_refresh_net_worth` and reloads dashboard caches.",
-        key="dash_refresh_nw_btn",
-    ):
-        with st.spinner("Refreshing BigQuery Net Worth table (`sp_refresh_net_worth`)..."):
-            ok, err = dashboard_service.refresh_net_worth_snapshot()
-            _load_full_dashboard_bundle.clear()
-            st.session_state.pop("dashboard_analytics_bundle", None)
-        if ok:
-            st.toast("✅ Net Worth snapshot refreshed!", icon="🎉")
-            st.rerun()
-        else:
-            st.error(f"Failed to refresh Net Worth snapshot: {err}")
-
 # --- Apply Global Filters ---
 monthly_df = dashboard_logic.compute_adjusted_monthly_stats(
     raw_monthly_df, tx_df, exclude_capital_lending=exclude_capital
 )
 
 filtered_df = monthly_df.copy()
-if period_preset == "Last 12 Months":
+if period_preset == "Last Closed Month":
+    closed_df = filtered_df[filtered_df["month"] < current_ym]
+    filtered_df = (closed_df.head(1) if not closed_df.empty else filtered_df.head(1)).copy()
+elif period_preset == "Current Month (MTD)":
+    mtd_df = filtered_df[filtered_df["month"] == current_ym]
+    filtered_df = (mtd_df if not mtd_df.empty else filtered_df.head(1)).copy()
+elif period_preset == "Last 3 Months":
+    filtered_df = filtered_df.head(3).copy()
+elif period_preset == "Last 6 Months":
+    filtered_df = filtered_df.head(6).copy()
+elif period_preset == "Last 12 Months":
     filtered_df = filtered_df.head(12).copy()
 elif period_preset == "Last 24 Months":
     filtered_df = filtered_df.head(24).copy()
 elif period_preset == "Year to Date (Current Year)":
     if available_years:
         filtered_df = filtered_df[filtered_df["year"] == available_years[0]].copy()
-elif period_preset == "Custom Years" and selected_years:
+elif period_preset == "Custom Month(s)" and selected_months:
+    filtered_df = filtered_df[filtered_df["month"].isin(selected_months)].copy()
+elif period_preset == "Custom Year(s)" and selected_years:
     filtered_df = filtered_df[filtered_df["year"].isin(selected_years)].copy()
 
 shown_months = set(filtered_df["month"].astype(str).tolist())

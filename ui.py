@@ -188,18 +188,63 @@ def init_page(page_title_suffix=None):
     """
     Standard header for all pages.
     1. Sets page config (Browser tab title, layout)
-    2. Displays the visual App Title (Dev/Prod)
-    3. Loads and returns the shared app context data
+    2. Synchronizes and renders the Sidebar Environment Switcher (Dev / Prod)
+    3. Displays the visual App Title (Dev/Prod)
     """
-    # 1. Page Config
-    # If a specific page title is given, append it (e.g., "Finoob - Import")
     browser_title = "Finoob"
     if page_title_suffix:
         browser_title += f" - {page_title_suffix}"
-        
+
     st.set_page_config(layout="wide", page_title=browser_title)
 
-    # 2. Visual Header
+    # 1. Sync environment from session state
+    current_env = config.sync_environment()
+
+    # 2. Sidebar Environment Controls
+    with st.sidebar:
+        st.divider()
+        env_options = ["dev", "prod"]
+        env_labels = {"dev": "🟢 Dev (`finoob.dev`)", "prod": "🔴 Production"}
+        selected_env = st.radio(
+            "Environment",
+            options=env_options,
+            index=env_options.index(current_env),
+            format_func=lambda e: env_labels.get(e, e),
+            horizontal=True,
+            help="Switch between the isolated `finoob.dev` sandbox dataset and live production tables.",
+        )
+        if selected_env != current_env:
+            config.set_environment(selected_env)
+            st.cache_data.clear()
+            for k in (
+                "dashboard_analytics_bundle",
+                "uncategorized_df",
+                "reimbursements_df",
+                "api_sync_result",
+                "status_message",
+            ):
+                st.session_state.pop(k, None)
+            st.toast(f"Switched to {env_labels[selected_env]}", icon="🔀")
+            st.rerun()
+
+        if config.ENV == "dev":
+            if st.button(
+                "🔄 Sync Dev from Prod",
+                use_container_width=True,
+                help="Zero-copy clones all 6 production tables into `finoob.dev.*` so your sandbox matches production.",
+            ):
+                from backend.infrastructure import db_client
+                with st.spinner("Cloning prod tables into `finoob.dev.*`..."):
+                    ok, msg = db_client.sync_dev_sandbox_from_prod()
+                    st.cache_data.clear()
+                    st.session_state.pop("dashboard_analytics_bundle", None)
+                if ok:
+                    st.toast(f"✅ {msg}", icon="🎉")
+                    st.rerun()
+                else:
+                    st.sidebar.error(f"Failed to sync dev sandbox: {msg}")
+
+    # 3. Visual Header
     display_title(config.ENV)
 
 def get_keywords_editor_config():
@@ -761,7 +806,7 @@ def render_net_worth_chart(nw_df):
                     {"filter": "datum.stack_order === 1"},
                     {"calculate": "'total_net_worth'", "as": "line_series"},
                 ],
-                "mark": {"type": "line", "strokeWidth": 2.5, "color": "#3b78e7"},
+                "mark": {"type": "line", "strokeWidth": 2.5, "point": True, "color": "#3b78e7"},
                 "encoding": {
                     "x": x_encoding,
                     "y": {
@@ -1144,7 +1189,7 @@ def render_monthly_spend_bucket_chart(bucket_df, exclude_capital_lending=True):
                     {"filter": "datum.stack_order === 1"},
                     {"calculate": "'6M Rolling Avg'", "as": "avg_series"},
                 ],
-                "mark": {"type": "line", "strokeWidth": 2.5, "strokeDash": [5, 3], "color": "#ef4444"},
+                "mark": {"type": "line", "strokeWidth": 2.5, "strokeDash": [5, 3], "point": True, "color": "#ef4444"},
                 "encoding": {
                     "x": x_enc,
                     "y": {"field": "rolling_6m_avg", "type": "quantitative"},
@@ -1592,7 +1637,7 @@ def render_net_worth_projection_chart(proj_df):
                     {"filter": "datum.stack_order === 1"},
                     {"calculate": "'total_net_worth'", "as": "nw_line"},
                 ],
-                "mark": {"type": "line", "strokeWidth": 2.5, "color": "#3b78e7"},
+                "mark": {"type": "line", "strokeWidth": 2.5, "point": True, "color": "#3b78e7"},
                 "encoding": {
                     "x": x_enc,
                     "y": {"field": "total_net_worth", "type": "quantitative"},

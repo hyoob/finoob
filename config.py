@@ -2,14 +2,16 @@ import os
 import streamlit as st
 
 # --- Environment ---
-# Fetches 'env', defaulting to None. If it's not strictly 'dev' or 'prod', we stop.
-ENV = st.secrets.get("environment")
-if ENV not in ["dev", "prod"]:
-    st.error(f"🚨 CONFIG ERROR: 'env' secret is missing or invalid. Must be 'dev' or 'prod'. Got: '{ENV}'")
+# Priority:
+# 1. Runtime session override (`st.session_state["active_environment"]` from sidebar switcher)
+# 2. OS environment variable (`FINOOB_ENV=prod` or `FINOOB_ENV=dev`)
+# 3. `.streamlit/secrets.toml` (`environment = "dev"` or `"prod"`)
+DEFAULT_ENV = (os.environ.get("FINOOB_ENV") or st.secrets.get("environment") or "").strip().lower()
+if DEFAULT_ENV not in ["dev", "prod"]:
+    st.error(
+        f"🚨 CONFIG ERROR: Environment must be 'dev' or 'prod' (via FINOOB_ENV or secrets.toml). Got: '{DEFAULT_ENV}'"
+    )
     st.stop()
-
-if ENV == "dev":
-    print("⚠️  [CONFIG] Running in DEV mode")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -23,23 +25,18 @@ TRANSACTIONS_DEV_TABLE_ID = f"{BQ_PROJECT_ID}.{DEV_DATASET_ID}.transactions"
 
 ACCOUNTS_PROD_TABLE_ID = f"{BQ_PROJECT_ID}.accounts.dim_accounts"
 ACCOUNTS_DEV_TABLE_ID = f"{BQ_PROJECT_ID}.{DEV_DATASET_ID}.dim_accounts"
-ACCOUNTS_TABLE_ID = ACCOUNTS_DEV_TABLE_ID if ENV == "dev" else ACCOUNTS_PROD_TABLE_ID
 
 CATEGORIES_PROD_TABLE_ID = f"{BQ_PROJECT_ID}.categories.dim_categories"
 CATEGORIES_DEV_TABLE_ID = f"{BQ_PROJECT_ID}.{DEV_DATASET_ID}.dim_categories"
-CATEGORIES_TABLE_ID = CATEGORIES_DEV_TABLE_ID if ENV == "dev" else CATEGORIES_PROD_TABLE_ID
 
 LOANS_PROD_TABLE_ID = f"{BQ_PROJECT_ID}.assets.dim_loans"
 LOANS_DEV_TABLE_ID = f"{BQ_PROJECT_ID}.{DEV_DATASET_ID}.dim_loans"
-LOANS_TABLE_ID = LOANS_DEV_TABLE_ID if ENV == "dev" else LOANS_PROD_TABLE_ID
 
 PROPERTY_ASSETS_PROD_TABLE_ID = f"{BQ_PROJECT_ID}.assets.dim_property_assets"
 PROPERTY_ASSETS_DEV_TABLE_ID = f"{BQ_PROJECT_ID}.{DEV_DATASET_ID}.dim_property_assets"
-PROPERTY_ASSETS_TABLE_ID = PROPERTY_ASSETS_DEV_TABLE_ID if ENV == "dev" else PROPERTY_ASSETS_PROD_TABLE_ID
 
 MORTGAGE_PROD_TABLE_ID = f"{BQ_PROJECT_ID}.liabilities.dim_mortgage_terms"
 MORTGAGE_DEV_TABLE_ID = f"{BQ_PROJECT_ID}.{DEV_DATASET_ID}.dim_mortgage_terms"
-MORTGAGE_TABLE_ID = MORTGAGE_DEV_TABLE_ID if ENV == "dev" else MORTGAGE_PROD_TABLE_ID
 
 # Shared Reporting & External Views
 NET_WORTH_DATASET_ID = "reporting"
@@ -55,5 +52,37 @@ STOCKS_TABLE_ID = f"{BQ_PROJECT_ID}.assets.stocks"
 STOCK_TICKER = "GOOG"
 
 
+def set_environment(env):
+    """Updates active environment ('dev' or 'prod') and rebinds all mutable table constants."""
+    global ENV, ACCOUNTS_TABLE_ID, CATEGORIES_TABLE_ID, LOANS_TABLE_ID, PROPERTY_ASSETS_TABLE_ID, MORTGAGE_TABLE_ID
+    target = str(env or DEFAULT_ENV).strip().lower()
+    if target not in ("dev", "prod"):
+        target = DEFAULT_ENV
+    ENV = target
+    try:
+        st.session_state["active_environment"] = ENV
+    except Exception:
+        pass
+    ACCOUNTS_TABLE_ID = ACCOUNTS_DEV_TABLE_ID if ENV == "dev" else ACCOUNTS_PROD_TABLE_ID
+    CATEGORIES_TABLE_ID = CATEGORIES_DEV_TABLE_ID if ENV == "dev" else CATEGORIES_PROD_TABLE_ID
+    LOANS_TABLE_ID = LOANS_DEV_TABLE_ID if ENV == "dev" else LOANS_PROD_TABLE_ID
+    PROPERTY_ASSETS_TABLE_ID = PROPERTY_ASSETS_DEV_TABLE_ID if ENV == "dev" else PROPERTY_ASSETS_PROD_TABLE_ID
+    MORTGAGE_TABLE_ID = MORTGAGE_DEV_TABLE_ID if ENV == "dev" else MORTGAGE_PROD_TABLE_ID
+    return ENV
+
+
+def sync_environment():
+    """Synchronizes module-level environment and table pointers with st.session_state."""
+    try:
+        active = st.session_state.get("active_environment")
+    except Exception:
+        active = None
+    return set_environment(active or DEFAULT_ENV)
+
+
 def get_table_id():
     return TRANSACTIONS_DEV_TABLE_ID if ENV == "dev" else TRANSACTIONS_PROD_TABLE_ID
+
+
+# Initialize module-level variables on import
+sync_environment()
