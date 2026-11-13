@@ -77,8 +77,8 @@ def get_categorization_editor_config(category_options):
         "transaction_number": st.column_config.NumberColumn("ID", disabled=True),
         "date": st.column_config.DateColumn("Date", format="YYYY-MM-DD", disabled=True),
         "description": st.column_config.TextColumn("Description", disabled=True),
-        "debit": st.column_config.NumberColumn("Debit", format="€%.2f", disabled=True),
-        "credit": st.column_config.NumberColumn("Credit", format="€%.2f", disabled=True),
+        "debit": st.column_config.NumberColumn("Debit", format="euro", step=0.01, disabled=True),
+        "credit": st.column_config.NumberColumn("Credit", format="euro", step=0.01, disabled=True),
         "account": st.column_config.TextColumn("Account", disabled=True),
         "account_id": None,  # Hide account_id column
         
@@ -118,7 +118,8 @@ def get_import_editor_config(category_options, include_account_col=False):
         ),
         "amount": st.column_config.NumberColumn(
             "amount",
-            format="%+.2f",
+            format="euro",
+            step=0.01,
             disabled=True,
             width=None,
             pinned=True,
@@ -265,7 +266,7 @@ def get_keywords_editor_config():
             help="Optional minimum transaction amount. Set equal to Max Amount for an exact amount match.",
             min_value=0.0,
             step=0.01,
-            format="€%.2f",
+            format="euro",
             required=False
         ),
         "max_amount": st.column_config.NumberColumn(
@@ -273,7 +274,7 @@ def get_keywords_editor_config():
             help="Optional maximum transaction amount. Set equal to Min Amount for an exact amount match.",
             min_value=0.0,
             step=0.01,
-            format="€%.2f",
+            format="euro",
             required=False
         ),
     }
@@ -382,9 +383,9 @@ def get_mortgage_editor_config():
         "mortgage_name": st.column_config.TextColumn("Mortgage Name", required=True),
         "start_date": st.column_config.DateColumn("Start Date", required=True),
         "end_date": st.column_config.DateColumn("End Date"),
-        "start_balance": st.column_config.NumberColumn("Initial Start Balance", format="€%.2f", required=True),
+        "start_balance": st.column_config.NumberColumn("Initial Start Balance", format="euro", step=0.01, required=True),
         "interest_rate_pct": st.column_config.NumberColumn("Initial Interest Rate %", format="%.2f", required=True),
-        "monthly_payment": st.column_config.NumberColumn("Initial Monthly Payment", format="€%.2f", required=True),
+        "monthly_payment": st.column_config.NumberColumn("Initial Monthly Payment", format="euro", step=0.01, required=True),
         "drawdown_date": st.column_config.DateColumn("Drawdown Date", required=True),
         "events": None,
     }
@@ -867,7 +868,7 @@ def get_loans_editor_config():
         ),
         "initial_principal": st.column_config.NumberColumn(
             "Initial Principal (€)",
-            format="%.2f €",
+            format="euro",
             min_value=0.0,
             step=100.0,
             required=True,
@@ -904,7 +905,7 @@ def get_property_assets_editor_config():
         ),
         "valuation_amount": st.column_config.NumberColumn(
             "Valuation Amount (€)",
-            format="%.2f €",
+            format="euro",
             min_value=0.0,
             step=1000.0,
             required=True,
@@ -1286,11 +1287,11 @@ def render_category_ranking_chart_and_table(cat_df):
         column_config={
             "category": st.column_config.TextColumn("Category", width="medium"),
             "spend_bucket": st.column_config.TextColumn("Bucket", width="medium"),
-            "net_spend": st.column_config.NumberColumn("Net Spend (€)", format="€%.0f", width="small"),
-            "gross_spend": st.column_config.NumberColumn("Gross Spend (€)", format="€%.0f", width="small"),
-            "reimbursed_offset": st.column_config.NumberColumn("Reimbursed (€)", format="€%.0f", width="small"),
-            "monthly_avg": st.column_config.NumberColumn("Period Avg (€/mo)", format="€%.0f", width="small"),
-            "trailing_12m_avg": st.column_config.NumberColumn("12M Avg (€/mo)", format="€%.0f", width="small"),
+            "net_spend": st.column_config.NumberColumn("Net Spend (€)", format="euro", step=1, width="small"),
+            "gross_spend": st.column_config.NumberColumn("Gross Spend (€)", format="euro", step=1, width="small"),
+            "reimbursed_offset": st.column_config.NumberColumn("Reimbursed (€)", format="euro", step=1, width="small"),
+            "monthly_avg": st.column_config.NumberColumn("Period Avg (€/mo)", format="euro", step=1, width="small"),
+            "trailing_12m_avg": st.column_config.NumberColumn("12M Avg (€/mo)", format="euro", step=1, width="small"),
             "vs_12m_pct": st.column_config.NumberColumn(
                 "vs 12M Avg",
                 format="%+.1f%%",
@@ -1304,7 +1305,7 @@ def render_category_ranking_chart_and_table(cat_df):
                 max_value=100.0,
                 width="small",
             ),
-            "tx_count": st.column_config.NumberColumn("Tx Count", format="%d", width="small"),
+            "tx_count": st.column_config.NumberColumn("Tx Count", format="localized", step=1, width="small"),
         },
     )
 

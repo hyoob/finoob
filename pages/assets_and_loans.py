@@ -94,10 +94,10 @@ with tab_loans:
                 "loan_id": st.column_config.TextColumn("Loan ID", width="medium"),
                 "status": st.column_config.TextColumn("Status", width="small"),
                 "start_date": st.column_config.DateColumn("Start Date", format="YYYY-MM-DD", width="small"),
-                "initial_principal": st.column_config.NumberColumn("Initial Principal", format="%.2f €", width="small"),
-                "total_funded": st.column_config.NumberColumn("Funded (Outflow)", format="%.2f €", width="small"),
-                "total_repaid": st.column_config.NumberColumn("Repaid (Inflow)", format="%.2f €", width="small"),
-                "remaining_balance": st.column_config.NumberColumn("Remaining Balance", format="%.2f €", width="small"),
+                "initial_principal": st.column_config.NumberColumn("Initial Principal", format="euro", step=0.01, width="small"),
+                "total_funded": st.column_config.NumberColumn("Funded (Outflow)", format="euro", step=0.01, width="small"),
+                "total_repaid": st.column_config.NumberColumn("Repaid (Inflow)", format="euro", step=0.01, width="small"),
+                "remaining_balance": st.column_config.NumberColumn("Remaining Balance", format="euro", step=0.01, width="small"),
                 "repaid_pct": st.column_config.ProgressColumn(
                     "% Repaid",
                     format="%.1f%%",
@@ -165,8 +165,8 @@ with tab_loans:
                     "loan_flow_type": st.column_config.TextColumn("Type", width="medium"),
                     "description": st.column_config.TextColumn("Description", width="large"),
                     "label": st.column_config.TextColumn("Label", width="medium"),
-                    "debit": st.column_config.NumberColumn("Debit (Outflow)", format="%.2f €", width="small"),
-                    "credit": st.column_config.NumberColumn("Credit (Repayment)", format="%.2f €", width="small"),
+                    "debit": st.column_config.NumberColumn("Debit (Outflow)", format="euro", step=0.01, width="small"),
+                    "credit": st.column_config.NumberColumn("Credit (Repayment)", format="euro", step=0.01, width="small"),
                 },
             )
 
@@ -187,7 +187,7 @@ with tab_loans:
                     "loan_id": st.column_config.TextColumn("Loan ID", width="medium"),
                     "report_month": st.column_config.DateColumn("Month", format="YYYY-MM-DD", width="small"),
                     "remaining_asset_value": st.column_config.NumberColumn(
-                        "Remaining Receivable (€)", format="%.2f €", width="medium"
+                        "Remaining Receivable (€)", format="euro", step=0.01, width="medium"
                     ),
                 },
             )
@@ -341,9 +341,9 @@ with tab_pension:
             column_config={
                 "month": st.column_config.DateColumn("Month", format="YYYY-MM-DD", width="small"),
                 "account": st.column_config.TextColumn("Account", width="small"),
-                "balance": st.column_config.NumberColumn("Pension Balance (€)", format="%.2f €", width="medium"),
+                "balance": st.column_config.NumberColumn("Pension Balance (€)", format="euro", step=0.01, width="medium"),
                 "total_contributions": st.column_config.NumberColumn(
-                    "Cumulative Regular Contributions (€)", format="%.2f €", width="medium"
+                    "Cumulative Regular Contributions (€)", format="euro", step=0.01, width="medium"
                 ),
             },
         )

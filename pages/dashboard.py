@@ -74,12 +74,12 @@ def _render_category_drilldown_fragment(tx_df, avail_cats, shown_months):
             hide_index=True,
             column_config={
                 "label": st.column_config.TextColumn("Label / Subcategory"),
-                "net_spend": st.column_config.NumberColumn("Net Spend (€)", format="€%.2f"),
-                "gross_spend": st.column_config.NumberColumn("Gross (€)", format="€%.2f"),
-                "reimbursed_offset": st.column_config.NumberColumn("Reimbursed (€)", format="€%.2f"),
-                "monthly_avg": st.column_config.NumberColumn("Avg/mo (€)", format="€%.1f"),
+                "net_spend": st.column_config.NumberColumn("Net Spend (€)", format="euro", step=0.01),
+                "gross_spend": st.column_config.NumberColumn("Gross (€)", format="euro", step=0.01),
+                "reimbursed_offset": st.column_config.NumberColumn("Reimbursed (€)", format="euro", step=0.01),
+                "monthly_avg": st.column_config.NumberColumn("Avg/mo (€)", format="euro", step=0.1),
                 "share_pct": st.column_config.ProgressColumn("Share", format="%.1f%%", min_value=0, max_value=100),
-                "tx_count": st.column_config.NumberColumn("Tx", format="%d"),
+                "tx_count": st.column_config.NumberColumn("Tx", format="localized", step=1),
             },
         )
     with sub_c2:
@@ -90,9 +90,9 @@ def _render_category_drilldown_fragment(tx_df, avail_cats, shown_months):
             hide_index=True,
             column_config={
                 "description": st.column_config.TextColumn("Description / Merchant"),
-                "net_spend": st.column_config.NumberColumn("Total (€)", format="€%.2f"),
-                "tx_count": st.column_config.NumberColumn("Count", format="%d"),
-                "avg_ticket": st.column_config.NumberColumn("Avg Ticket (€)", format="€%.2f"),
+                "net_spend": st.column_config.NumberColumn("Total (€)", format="euro", step=0.01),
+                "tx_count": st.column_config.NumberColumn("Count", format="localized", step=1),
+                "avg_ticket": st.column_config.NumberColumn("Avg Ticket (€)", format="euro", step=0.01),
                 "last_date": st.column_config.DateColumn("Last Seen", format="YYYY-MM-DD"),
             },
         )
@@ -114,9 +114,9 @@ def _render_category_drilldown_fragment(tx_df, avail_cats, shown_months):
                 "account_name": st.column_config.TextColumn("Account"),
                 "description": st.column_config.TextColumn("Description"),
                 "label": st.column_config.TextColumn("Label"),
-                "debit": st.column_config.NumberColumn("Net Debit (€)", format="€%.2f"),
-                "gross_debit": st.column_config.NumberColumn("Gross Debit (€)", format="€%.2f"),
-                "reimbursed_offset": st.column_config.NumberColumn("Reimbursed (€)", format="€%.2f"),
+                "debit": st.column_config.NumberColumn("Net Debit (€)", format="euro", step=0.01),
+                "gross_debit": st.column_config.NumberColumn("Gross Debit (€)", format="euro", step=0.01),
+                "reimbursed_offset": st.column_config.NumberColumn("Reimbursed (€)", format="euro", step=0.01),
             },
         )
 
@@ -327,14 +327,14 @@ def _render_projection_simulator_fragment(
                 hide_index=True,
                 column_config={
                     "month": st.column_config.TextColumn("Month"),
-                    "total_net_worth": st.column_config.NumberColumn("Projected Net Worth", format="€%.0f"),
-                    "liquid_and_invested": st.column_config.NumberColumn("Liquid + Stocks", format="€%.0f"),
-                    "remaining_mortgage": st.column_config.NumberColumn("Remaining Mortgage", format="€%.0f"),
-                    "cash_and_savings": st.column_config.NumberColumn("Cash & Savings", format="€%.0f"),
-                    "equity_stocks": st.column_config.NumberColumn("Stocks / Equity", format="€%.0f"),
-                    "pension": st.column_config.NumberColumn("Pension", format="€%.0f"),
-                    "home_equity": st.column_config.NumberColumn("Net Home Equity", format="€%.0f"),
-                    "receivables_loans": st.column_config.NumberColumn("Loan Receivables", format="€%.0f"),
+                    "total_net_worth": st.column_config.NumberColumn("Projected Net Worth", format="euro", step=1),
+                    "liquid_and_invested": st.column_config.NumberColumn("Liquid + Stocks", format="euro", step=1),
+                    "remaining_mortgage": st.column_config.NumberColumn("Remaining Mortgage", format="euro", step=1),
+                    "cash_and_savings": st.column_config.NumberColumn("Cash & Savings", format="euro", step=1),
+                    "equity_stocks": st.column_config.NumberColumn("Stocks / Equity", format="euro", step=1),
+                    "pension": st.column_config.NumberColumn("Pension", format="euro", step=1),
+                    "home_equity": st.column_config.NumberColumn("Net Home Equity", format="euro", step=1),
+                    "receivables_loans": st.column_config.NumberColumn("Loan Receivables", format="euro", step=1),
                 },
             )
 
@@ -512,9 +512,9 @@ with tab_pulse:
                 column_config={
                     "category": st.column_config.TextColumn("Category"),
                     "spend_bucket": st.column_config.TextColumn("Bucket"),
-                    "net_spend": st.column_config.NumberColumn("Total (€)", format="€%.0f"),
-                    "monthly_avg": st.column_config.NumberColumn("Avg/mo", format="€%.0f"),
-                    "trailing_12m_avg": st.column_config.NumberColumn("12M Avg/mo", format="€%.0f"),
+                    "net_spend": st.column_config.NumberColumn("Total (€)", format="euro", step=1),
+                    "monthly_avg": st.column_config.NumberColumn("Avg/mo", format="euro", step=1),
+                    "trailing_12m_avg": st.column_config.NumberColumn("12M Avg/mo", format="euro", step=1),
                     "vs_12m_pct": st.column_config.NumberColumn("vs 12M", format="%+.1f%%"),
                     "share_pct": st.column_config.ProgressColumn("Share", format="%.1f%%", min_value=0, max_value=100),
                 },
@@ -541,7 +541,7 @@ with tab_pulse:
                     "category": st.column_config.TextColumn("Category", width="small"),
                     "label": st.column_config.TextColumn("Label", width="small"),
                     "description": st.column_config.TextColumn("Description", width="medium"),
-                    "debit": st.column_config.NumberColumn("Amount (€)", format="€%.2f", width="small"),
+                    "debit": st.column_config.NumberColumn("Amount (€)", format="euro", step=0.01, width="small"),
                     "account_name": st.column_config.TextColumn("Account", width="small"),
                 },
             )
@@ -650,10 +650,10 @@ with tab_income:
                 hide_index=True,
                 column_config={
                     "category": st.column_config.TextColumn("Income Category"),
-                    "total_income": st.column_config.NumberColumn("Total Income (€)", format="€%.0f"),
-                    "monthly_avg": st.column_config.NumberColumn("Monthly Avg (€/mo)", format="€%.0f"),
+                    "total_income": st.column_config.NumberColumn("Total Income (€)", format="euro", step=1),
+                    "monthly_avg": st.column_config.NumberColumn("Monthly Avg (€/mo)", format="euro", step=1),
                     "share_pct": st.column_config.ProgressColumn("Share of Income", format="%.1f%%", min_value=0, max_value=100),
-                    "tx_count": st.column_config.NumberColumn("Tx Count", format="%d"),
+                    "tx_count": st.column_config.NumberColumn("Tx Count", format="localized", step=1),
                 },
             )
     with ic_col2:
@@ -666,7 +666,7 @@ with tab_income:
                 column_config={
                     "step": st.column_config.TextColumn("Allocation Step"),
                     "type": st.column_config.TextColumn("Flow Type"),
-                    "amount": st.column_config.NumberColumn("Amount (€)", format="%+d €"),
+                    "amount": st.column_config.NumberColumn("Amount (€)", format="euro", step=1),
                     "share_of_income_pct": st.column_config.ProgressColumn(
                         "% of Total Income",
                         format="%.1f%%",
@@ -734,7 +734,7 @@ with tab_wealth:
                 hide_index=True,
                 column_config={
                     "tier": st.column_config.TextColumn("Liquidity Tier"),
-                    "amount": st.column_config.NumberColumn("Balance (€)", format="€%.0f"),
+                    "amount": st.column_config.NumberColumn("Balance (€)", format="euro", step=1),
                     "share_pct": st.column_config.ProgressColumn("Share of Net Worth", format="%.1f%%", min_value=0, max_value=100),
                 },
             )
@@ -749,7 +749,7 @@ with tab_wealth:
                     "wealth_source": st.column_config.TextColumn("Account / Asset"),
                     "wealth_category": st.column_config.TextColumn("Category"),
                     "liquidity_tier": st.column_config.TextColumn("Tier"),
-                    "closing_balance": st.column_config.NumberColumn("Balance (€)", format="€%.0f"),
+                    "closing_balance": st.column_config.NumberColumn("Balance (€)", format="euro", step=1),
                     "share_of_nw_pct": st.column_config.NumberColumn("% of NW", format="%.1f%%"),
                 },
             )
@@ -817,7 +817,17 @@ with tab_future:
                 use_container_width=True,
             )
             with st.expander("View Monthly Future Vesting Table", expanded=False):
-                st.dataframe(vest_df, use_container_width=True, hide_index=True)
+                st.dataframe(
+                    vest_df,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "month": st.column_config.TextColumn("Vest Month"),
+                        "gsus_vesting": st.column_config.NumberColumn("GSUs Vesting", format="localized", step=1),
+                        "incremental_after_tax_eur": st.column_config.NumberColumn("Est. After-Tax (€)", format="euro", step=1),
+                        "grants": st.column_config.TextColumn("Grants"),
+                    },
+                )
         else:
             st.info("No future unvested GSU rows found in `finoob.assets.stocks`.")
 
@@ -830,13 +840,13 @@ with tab_future:
                 hide_index=True,
                 column_config={
                     "horizon": st.column_config.TextColumn("Horizon"),
-                    "months": st.column_config.NumberColumn("Months", format="%d"),
-                    "principal_paid_eur": st.column_config.NumberColumn("Principal Paid (€)", format="€%.0f"),
-                    "interest_paid_eur": st.column_config.NumberColumn("Interest Cost (€)", format="€%.0f"),
+                    "months": st.column_config.NumberColumn("Months", format="localized", step=1),
+                    "principal_paid_eur": st.column_config.NumberColumn("Principal Paid (€)", format="euro", step=1),
+                    "interest_paid_eur": st.column_config.NumberColumn("Interest Cost (€)", format="euro", step=1),
                     "principal_share_pct": st.column_config.ProgressColumn(
                         "Principal Share", format="%.1f%%", min_value=0, max_value=100
                     ),
-                    "ending_balance_eur": st.column_config.NumberColumn("Ending Debt (€)", format="€%.0f"),
+                    "ending_balance_eur": st.column_config.NumberColumn("Ending Debt (€)", format="euro", step=1),
                 },
             )
 

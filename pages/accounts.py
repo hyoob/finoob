@@ -118,9 +118,9 @@ with tab_overview:
             ],
             column_config={
                 "account_name": st.column_config.TextColumn("Account"),
-                "bq_balance": st.column_config.NumberColumn("BigQuery Latest Balance", format="%.2f €"),
-                "live_bank_balance": st.column_config.NumberColumn("Live Bank API Balance", format="%.2f €"),
-                "bank_diff": st.column_config.NumberColumn("Bank vs BQ Diff", format="%+.2f €"),
+                "bq_balance": st.column_config.NumberColumn("BigQuery Latest Balance", format="euro", step=0.01),
+                "live_bank_balance": st.column_config.NumberColumn("Live Bank API Balance", format="euro", step=0.01),
+                "bank_diff": st.column_config.NumberColumn("Bank vs BQ Diff", format="euro", step=0.01),
                 "bank_balance_type": st.column_config.TextColumn("API Balance Type"),
                 "last_bq_date": st.column_config.TextColumn("Last BQ Tx Date"),
                 "status": st.column_config.TextColumn("Sync Status"),
