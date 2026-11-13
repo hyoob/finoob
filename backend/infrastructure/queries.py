@@ -51,6 +51,18 @@ def get_dim_accounts_query(accounts_table_id):
     """
 
 
+def get_dim_categories_query(categories_table_id):
+    return f"""
+        SELECT
+            category,
+            spend_bucket,
+            rules,
+            updated_at
+        FROM `{categories_table_id}`
+        ORDER BY category ASC
+    """
+
+
 def get_accounts_with_latest_balances_query(accounts_table_id, tx_table_id):
     return f"""
         WITH latest_tx AS (
@@ -366,13 +378,15 @@ def get_loan_receivables_query(view_id):
     """
 
 
-def get_loan_transactions_query(tx_table_id, loans_table_id):
+def get_loan_transactions_query(tx_table_id, loans_table_id, accounts_table_id=None):
+    join_acc = f"LEFT JOIN `{accounts_table_id}` a ON t.account_id = a.account_id" if accounts_table_id else ""
+    acc_expr = "COALESCE(a.account_name, t.account, t.account_id)" if accounts_table_id else "COALESCE(t.account, t.account_id)"
     return f"""
         SELECT
             l.loan_id,
             l.borrower_name,
             t.date,
-            t.account,
+            {acc_expr} AS account,
             t.description,
             t.label,
             t.category,
@@ -387,6 +401,7 @@ def get_loan_transactions_query(tx_table_id, loans_table_id):
         INNER JOIN `{loans_table_id}` l
             ON t.label = l.transaction_label
             OR t.label = l.funding_label
+        {join_acc}
         ORDER BY t.date DESC, t.transaction_number DESC
     """
 

@@ -1,5 +1,5 @@
 from datetime import timedelta
-from backend.infrastructure import local_storage, parsers, db_client, queries, enable_banking_client
+from backend.infrastructure import parsers, db_client, queries, enable_banking_client
 from backend.domain import account_logic, categorization_logic, transaction_logic
 from backend.services import accounts_service, rules_service
 import pandas as pd
@@ -204,8 +204,11 @@ def save_transactions_workflow(table_id, account_id, edited_df, staged_reimb_lin
     if staged_reimb_links:
         _apply_staged_reimbursements_after_insert(table_id, row_id_map, staged_reimb_links)
 
-    # Update the net worth table
-    update_success, error_msg = db_client.update_net_worth_table() 
+    # Update the net worth table (skip in dev mode since sp_refresh_net_worth targets prod tables)
+    if config.ENV == "dev":
+        update_success, error_msg = True, None
+    else:
+        update_success, error_msg = db_client.update_net_worth_table()
     accounts_service._fetch_accounts_with_balances_cached.clear()
 
     return len(clean_df), update_success, error_msg
@@ -396,8 +399,11 @@ def save_multi_account_transactions_workflow(table_id, combined_edited_df, stage
     if staged_reimb_links:
         _apply_staged_reimbursements_after_insert(table_id, row_id_map, staged_reimb_links)
 
-    # Refresh the net worth table once
-    update_success, error_msg = db_client.update_net_worth_table()
+    # Refresh the net worth table once (skip in dev mode since sp_refresh_net_worth targets prod tables)
+    if config.ENV == "dev":
+        update_success, error_msg = True, None
+    else:
+        update_success, error_msg = db_client.update_net_worth_table()
     accounts_service._fetch_accounts_with_balances_cached.clear()
 
     return len(final_df), len(enriched_batches), update_success, error_msg
@@ -405,40 +411,45 @@ def save_multi_account_transactions_workflow(table_id, combined_edited_df, stage
 
 def reset_dev_sandbox_from_prod():
     """
-    Copies the production BigQuery transactions table into the dev sample_transactions
-    table and syncs categories_dev.json from categories.json.
+    Clones all 6 mutable production BigQuery tables into the `finoob.dev` dataset
+    (`transactions`, `dim_accounts`, `dim_categories`, `dim_loans`, `dim_property_assets`, `dim_mortgage_terms`).
     Only permitted when config.ENV == 'dev'.
     """
-    import streamlit as st
-
     if config.ENV != "dev":
         raise RuntimeError("reset_dev_sandbox_from_prod can only be run in DEV mode.")
 
-    prod_cats = local_storage.load_json_data(config.CATEGORIES_PROD_PATH)
-    if prod_cats:
-        local_storage.save_data(config.CATEGORIES_DEV_PATH, prod_cats)
-
-    prod_tbl = st.secrets["bigquery_table"]["prod"]
-    dev_tbl = st.secrets["bigquery_table"]["dev"]
     client = db_client.get_client()
-    query = f"CREATE OR REPLACE TABLE `{dev_tbl}` AS SELECT * FROM `{prod_tbl}`"
-    client.query(query).result()
+    clone_pairs = [
+        (config.TRANSACTIONS_PROD_TABLE_ID, config.TRANSACTIONS_DEV_TABLE_ID),
+        (config.ACCOUNTS_PROD_TABLE_ID, config.ACCOUNTS_DEV_TABLE_ID),
+        (config.CATEGORIES_PROD_TABLE_ID, config.CATEGORIES_DEV_TABLE_ID),
+        (config.LOANS_PROD_TABLE_ID, config.LOANS_DEV_TABLE_ID),
+        (config.PROPERTY_ASSETS_PROD_TABLE_ID, config.PROPERTY_ASSETS_DEV_TABLE_ID),
+        (config.MORTGAGE_PROD_TABLE_ID, config.MORTGAGE_DEV_TABLE_ID),
+    ]
+
+    for src, dst in clone_pairs:
+        try:
+            client.query(f"CREATE OR REPLACE TABLE `{dst}` CLONE `{src}`").result()
+        except Exception:
+            client.query(f"CREATE OR REPLACE TABLE `{dst}` AS SELECT * FROM `{src}`").result()
+
+    accounts_service._fetch_accounts_with_balances_cached.clear()
+    rules_service.clear_categories_cache()
     return True
 
 
 def rewind_dev_sandbox_transactions(count=100):
     """
     Removes the most recent `count` transactions (by date DESC, transaction_number DESC)
-    from the dev BigQuery table (`sample_transactions`) and unlinks any expenses whose
-    reimbursements were among the removed rows.
+    from `finoob.dev.transactions` and unlinks any expenses whose reimbursements were
+    among the removed rows.
     Only permitted when config.ENV == 'dev'.
     """
-    import streamlit as st
-
     if config.ENV != "dev":
         raise RuntimeError("rewind_dev_sandbox_transactions can only be run in DEV mode.")
 
-    dev_tbl = st.secrets["bigquery_table"]["dev"]
+    dev_tbl = config.TRANSACTIONS_DEV_TABLE_ID
     client = db_client.get_client()
     n = int(count)
 

@@ -42,32 +42,32 @@ if config.ENV == "dev":
     hdr_col2.write("")
     if hdr_col2.button(
         "⏪ Remove Last 100 Dev Txs",
-        help="Deletes the 100 most recent transactions from sample_transactions (and rewinds accounts_dev.json balances) so you can test the Import workflow.",
+        help="Deletes the 100 most recent transactions from finoob.dev.transactions so you can test the Import workflow.",
         use_container_width=True,
         key="rewind_dev_sandbox_btn",
     ):
-        with st.spinner("Removing last 100 transactions from dev sandbox..."):
+        with st.spinner("Removing last 100 transactions from dev sandbox (`finoob.dev.transactions`)..."):
             removed_cnt = ingestion_service.rewind_dev_sandbox_transactions(count=100)
             st.session_state.pop("multi_api_sync_result", None)
             st.cache_data.clear()
             st.session_state.pending_rule_toast = (
-                f"⏪ Removed the last {removed_cnt} transactions from `sample_transactions`!"
+                f"⏪ Removed the last {removed_cnt} transactions from `finoob.dev.transactions`!"
             )
         st.rerun()
 
     hdr_col3.write("")
     if hdr_col3.button(
         "🔄 Reset Dev Sandbox from Prod",
-        help="Copies prod transactions table -> sample_transactions, accounts.json -> accounts_dev.json, and categories.json -> categories_dev.json",
+        help="Zero-copy clones all 6 mutable prod tables into the `finoob.dev` dataset (`transactions`, `dim_accounts`, `dim_categories`, `dim_loans`, `dim_property_assets`, `dim_mortgage_terms`).",
         use_container_width=True,
         key="reset_dev_sandbox_btn",
     ):
-        with st.spinner("Cloning prod table, accounts & categories into dev sandbox..."):
+        with st.spinner("Cloning production tables into `finoob.dev` dataset..."):
             ingestion_service.reset_dev_sandbox_from_prod()
             st.session_state.pop("multi_api_sync_result", None)
             st.cache_data.clear()
             st.session_state.pending_rule_toast = (
-                "✅ Dev sandbox (`sample_transactions`, `accounts_dev.json` & `categories_dev.json`) reset from `prod`!"
+                "✅ Dev sandbox dataset (`finoob.dev.*`) reset from `prod`!"
             )
         st.rerun()
 

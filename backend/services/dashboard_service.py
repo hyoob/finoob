@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
+import config
 from backend.infrastructure import db_client, queries
 from backend.domain import dashboard_logic
 
@@ -70,12 +71,13 @@ def load_dashboard_analytics_bundle(
         "nw_sources": queries.get_net_worth_sources_query(nw_table_id),
         "tx": queries.get_dashboard_transactions_query(tx_table_id, accounts_table_id),
         "accounts": queries.get_dim_accounts_query(accounts_table_id),
+        "categories": queries.get_dim_categories_query(config.CATEGORIES_TABLE_ID),
         "stocks": queries.get_stocks_data_query(stocks_table_id),
         "mortgage_schedule": queries.get_mortgage_schedule_query(mortgage_schedule_view_id),
     }
 
     results = {}
-    with ThreadPoolExecutor(max_workers=8) as pool:
+    with ThreadPoolExecutor(max_workers=9) as pool:
         future_map = {k: pool.submit(_q, sql) for k, sql in q_map.items()}
         for k, fut in future_map.items():
             try:
@@ -84,10 +86,16 @@ def load_dashboard_analytics_bundle(
                 print(f"[Dashboard Service] Query '{k}' failed: {e}")
                 results[k] = []
 
+    bucket_map = {
+        str(r.get("category")): str(r.get("spend_bucket"))
+        for r in (results.get("categories") or [])
+        if r.get("category") and r.get("spend_bucket")
+    }
+
     monthly_df = dashboard_logic.prepare_monthly_stats_df(results["monthly"])
     nw_breakdown_df = dashboard_logic.prepare_net_worth_breakdown_df(results["nw_breakdown"])
     nw_sources_df = dashboard_logic.prepare_net_worth_sources_df(results["nw_sources"])
-    tx_df = dashboard_logic.prepare_dashboard_transactions_df(results["tx"])
+    tx_df = dashboard_logic.prepare_dashboard_transactions_df(results["tx"], bucket_map=bucket_map)
     accounts_df = pd.DataFrame(results["accounts"]) if results["accounts"] else pd.DataFrame()
 
     stocks_df = pd.DataFrame(results["stocks"]) if results["stocks"] else pd.DataFrame()

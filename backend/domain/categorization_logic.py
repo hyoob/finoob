@@ -1,4 +1,3 @@
-import json
 import re
 import pandas as pd
 
@@ -37,17 +36,6 @@ def compile_keyword_pattern(raw_keyword):
     suffix = "" if has_trailing_wildcard else r"(?![a-zA-Z])"
     pattern = re.compile(prefix + re.escape(core) + suffix, re.IGNORECASE)
     return pattern, len(core)
-
-
-def load_category_options(filepath):
-    """
-    Reads the JSON file and returns the list of keys (categories).
-    """
-    with open(filepath, "r") as f:
-        category_data = json.load(f)
-    
-    # Return the list of keys to be used as options
-    return category_data
 
 
 def get_keyword_changes_summary(old_list, new_list):

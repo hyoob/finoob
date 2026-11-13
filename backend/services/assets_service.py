@@ -1,5 +1,6 @@
 import pandas as pd
 import streamlit as st
+import config
 from backend.domain import assets_logic
 from backend.infrastructure import db_client, queries
 
@@ -33,7 +34,9 @@ def get_loan_receivables(view_id):
 @st.cache_data(ttl=60, show_spinner=False)
 def get_loan_transactions(tx_table_id, loans_table_id):
     """Fetches all bank transactions matched to loans via funding_label or transaction_label."""
-    rows = db_client.run_query(queries.get_loan_transactions_query(tx_table_id, loans_table_id))
+    rows = db_client.run_query(
+        queries.get_loan_transactions_query(tx_table_id, loans_table_id, config.ACCOUNTS_TABLE_ID)
+    )
     return pd.DataFrame(rows) if rows else pd.DataFrame()
 
 

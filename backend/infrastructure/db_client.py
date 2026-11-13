@@ -173,8 +173,11 @@ def execute_procedure(procedure_id):
 
 def update_net_worth_table():
     """
-    Facade for running the create_networth_table procedure in BigQuery.
+    Facade for running the sp_refresh_net_worth procedure in BigQuery.
+    Skipped in dev mode so sandbox edits do not trigger a prod reporting table rebuild.
     """
+    if config.ENV == "dev":
+        return True, None
     return execute_procedure(config.NET_WORTH_PROCEDURE)
 
 def save_mortgage_updates(table_id, edited_df):
@@ -431,3 +434,89 @@ def update_account_open_banking_link(table_id, acc_id, account_uid, valid_until=
     except Exception as e:
         print(f"Error updating Open Banking link in {table_id}: {e}")
         return False
+
+
+def save_dim_categories_table(table_id, categories_dict, bucket_map=None):
+    """
+    Replaces finoob.categories.dim_categories in BigQuery with the provided
+    categories_dict ({category_name: [rule_dicts]}) and optional bucket_map ({category_name: spend_bucket}).
+    """
+    client = get_client()
+    bucket_map = bucket_map or {}
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    rows_to_load = []
+    total_rules = 0
+
+    for cat_name, rules_list in (categories_dict or {}).items():
+        cat_str = str(cat_name)
+        if not cat_str.strip():
+            continue
+
+        clean_rules = []
+        for idx, r in enumerate(rules_list or []):
+            kw = str(r.get("keyword") or "").strip()
+            if not kw:
+                continue
+            lbl = "" if r.get("label") is None or pd.isna(r.get("label")) else str(r.get("label"))
+
+            min_val = r.get("min_amount")
+            max_val = r.get("max_amount")
+            try:
+                min_amt = round(float(min_val), 2) if min_val is not None and not pd.isna(min_val) and str(min_val).strip() != "" else None
+            except (ValueError, TypeError):
+                min_amt = None
+            try:
+                max_amt = round(float(max_val), 2) if max_val is not None and not pd.isna(max_val) and str(max_val).strip() != "" else None
+            except (ValueError, TypeError):
+                max_amt = None
+
+            clean_rules.append(
+                {
+                    "keyword": kw,
+                    "label": lbl,
+                    "min_amount": min_amt,
+                    "max_amount": max_amt,
+                    "rule_order": idx,
+                }
+            )
+            total_rules += 1
+
+        rows_to_load.append(
+            {
+                "category": cat_str,
+                "spend_bucket": bucket_map.get(cat_str, bucket_map.get(cat_str.strip())),
+                "rules": clean_rules,
+                "updated_at": now_iso,
+            }
+        )
+
+    schema = [
+        bigquery.SchemaField("category", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("spend_bucket", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField(
+            "rules",
+            "RECORD",
+            mode="REPEATED",
+            fields=[
+                bigquery.SchemaField("keyword", "STRING", mode="REQUIRED"),
+                bigquery.SchemaField("label", "STRING", mode="NULLABLE"),
+                bigquery.SchemaField("min_amount", "FLOAT", mode="NULLABLE"),
+                bigquery.SchemaField("max_amount", "FLOAT", mode="NULLABLE"),
+                bigquery.SchemaField("rule_order", "INTEGER", mode="NULLABLE"),
+            ],
+        ),
+        bigquery.SchemaField("updated_at", "TIMESTAMP", mode="NULLABLE"),
+    ]
+
+    try:
+        job_config = bigquery.LoadJobConfig(
+            schema=schema,
+            write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+        )
+        job = client.load_table_from_json(rows_to_load, table_id, job_config=job_config)
+        job.result()
+        return True, f"Saved {len(rows_to_load)} categories ({total_rules} rules) to `{table_id}`."
+    except Exception as e:
+        return False, str(e)
+

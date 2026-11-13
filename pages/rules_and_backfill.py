@@ -34,27 +34,51 @@ tab_manage, tab_categorize, tab_reimb = st.tabs([
 # =====================================================================
 # TAB 1: MANAGE CATEGORIES & KEYWORD RULES
 # =====================================================================
+BUCKET_OPTIONS = [
+    "Fixed & Essential",
+    "Discretionary & Lifestyle",
+    "Giving",
+    "Capital & Lending",
+    "Income",
+    "Internal",
+]
+
 with tab_manage:
     if "manage_cats" not in st.session_state:
         st.session_state.manage_cats = categories
+
+    if "manage_cat_buckets" not in st.session_state:
+        st.session_state.manage_cat_buckets = rules_service.get_category_bucket_map()
 
     if "manage_cats_snapshot" not in st.session_state:
         st.session_state.manage_cats_snapshot = copy.deepcopy(st.session_state.manage_cats)
 
     with st.expander("➕ Add New Category"):
-        c1, c2 = st.columns([3, 1])
+        c1, c2, c3 = st.columns([2.2, 1.5, 1.0])
         new_cat_name = c1.text_input("Category Name", placeholder="e.g., Subscription", key="new_cat_name_input")
+        new_cat_bucket = c2.selectbox(
+            "Spend Bucket",
+            options=BUCKET_OPTIONS,
+            index=1,
+            key="new_cat_bucket_select",
+            help="Determines how this category is grouped on the Dashboard.",
+        )
 
-        if c2.button("Create Category", type="primary", key="create_cat_btn"):
+        c3.write("")
+        if c3.button("Create Category", type="primary", key="create_cat_btn", use_container_width=True):
             if new_cat_name:
                 if new_cat_name in st.session_state.manage_cats:
                     st.warning("Category already exists.")
                 else:
                     st.session_state.manage_cats[new_cat_name] = []
-                    success, message = rules_service.update_rules(st.session_state.manage_cats)
+                    st.session_state.manage_cat_buckets[new_cat_name] = new_cat_bucket
+                    success, message = rules_service.update_rules(
+                        st.session_state.manage_cats,
+                        bucket_map=st.session_state.manage_cat_buckets,
+                    )
                     if success:
                         st.cache_data.clear()
-                        st.session_state.pending_success = f"Added '{new_cat_name}' successfully!"
+                        st.session_state.pending_success = f"Added '{new_cat_name}' ({new_cat_bucket}) to BigQuery!"
                         st.rerun()
                     else:
                         st.error(message)
@@ -72,15 +96,19 @@ with tab_manage:
         if c2.button("Remove Category", type="primary", key="remove_cat_btn"):
             if cat_to_remove:
                 del st.session_state.manage_cats[cat_to_remove]
-                success, message = rules_service.update_rules(st.session_state.manage_cats)
+                st.session_state.manage_cat_buckets.pop(cat_to_remove, None)
+                success, message = rules_service.update_rules(
+                    st.session_state.manage_cats,
+                    bucket_map=st.session_state.manage_cat_buckets,
+                )
                 if success:
                     st.cache_data.clear()
-                    st.session_state.pending_success = f"Removed '{cat_to_remove}' successfully!"
+                    st.session_state.pending_success = f"Removed '{cat_to_remove}' from BigQuery!"
                     st.rerun()
                 else:
                     st.error(message)
 
-    st.subheader("📂 Manage Keywords")
+    st.subheader("📂 Manage Keywords (`finoob.categories.dim_categories`)")
     st.caption(
         "💡 **Matching tips:** Keywords match whole words (case-insensitive) by default. "
         "Use `*` at the start/end for partial word matches (e.g. `DELIVERO*`, `*SPAR*`). "
@@ -92,8 +120,6 @@ with tab_manage:
     selected_view = st.selectbox("Select a Category to edit:", view_options, index=0, key="manage_cats_view_select")
 
     if selected_view:
-        st.markdown(f"#### Editing: {selected_view}")
-
         if "current_view_name" not in st.session_state or st.session_state.current_view_name != selected_view:
             st.session_state.current_view_name = selected_view
             if "editor_df" in st.session_state:
@@ -102,6 +128,7 @@ with tab_manage:
                 del st.session_state.editor_all_df
 
         if selected_view == "Show All":
+            st.markdown("#### Editing: All Categories")
             if "editor_all_df" not in st.session_state:
                 st.session_state.editor_all_df = categorization_logic.flatten_categories_to_df(
                     st.session_state.manage_cats
@@ -129,6 +156,22 @@ with tab_manage:
             st.session_state.manage_cats = updated_dict
             st.session_state.editor_all_df = edited_df
         else:
+            hdr_c1, hdr_c2 = st.columns([2.2, 1.4])
+            with hdr_c1:
+                st.markdown(f"#### Editing: {selected_view}")
+            with hdr_c2:
+                cur_b = st.session_state.manage_cat_buckets.get(
+                    selected_view, rules_service.infer_default_spend_bucket(selected_view)
+                )
+                b_idx = BUCKET_OPTIONS.index(cur_b) if cur_b in BUCKET_OPTIONS else 1
+                chosen_bucket = st.selectbox(
+                    "Spend Bucket",
+                    options=BUCKET_OPTIONS,
+                    index=b_idx,
+                    key=f"bucket_select_{selected_view}",
+                )
+                st.session_state.manage_cat_buckets[selected_view] = chosen_bucket
+
             if "editor_df" not in st.session_state:
                 raw_data = st.session_state.manage_cats[selected_view]
                 st.session_state.editor_df = categorization_logic.prepare_keywords_dataframe(raw_data)
@@ -154,9 +197,12 @@ with tab_manage:
             msg_details = categorization_logic.get_keyword_changes_summary(original, current)
             msg = f"Saved {selected_view}: {msg_details}" if msg_details else f"Saved {selected_view}."
         else:
-            msg = "Global rule changes saved successfully."
+            msg = "Global rule changes saved to BigQuery."
 
-        success, error_text = rules_service.update_rules(st.session_state.manage_cats)
+        success, error_text = rules_service.update_rules(
+            st.session_state.manage_cats,
+            bucket_map=st.session_state.manage_cat_buckets,
+        )
         if success:
             st.cache_data.clear()
             st.session_state.manage_cats_snapshot = copy.deepcopy(st.session_state.manage_cats)

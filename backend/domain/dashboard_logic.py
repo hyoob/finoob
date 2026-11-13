@@ -219,7 +219,7 @@ def prepare_net_worth_sources_df(rows):
     return df[cols].sort_values(["month", "wealth_category", "wealth_source"]).reset_index(drop=True)
 
 
-def prepare_dashboard_transactions_df(rows):
+def prepare_dashboard_transactions_df(rows, bucket_map=None):
     """
     Transforms analytical transaction rows into a standardized DataFrame with spend buckets,
     reimbursement offsets, and cash-flow flags.
@@ -263,9 +263,22 @@ def prepare_dashboard_transactions_df(rows):
     df["label"] = df["label"].fillna("Unlabeled").astype(str).str.strip()
     df.loc[df["label"] == "", "label"] = "Unlabeled"
 
-    df["spend_bucket"] = df["category"].map(classify_spend_bucket)
-    df["is_internal"] = df["category"].isin(INTERNAL_NON_CASHFLOW_CATEGORIES)
-    df["is_capital_expense"] = df["category"].isin(CAPITAL_LENDING_EXPENSE_CATEGORIES)
+    norm_buckets = {str(k).strip(): str(v) for k, v in (bucket_map or {}).items() if v}
+
+    def _resolve_spend_bucket(cat):
+        b = norm_buckets.get(cat)
+        if b in SPEND_BUCKET_ORDER:
+            return b
+        return classify_spend_bucket(cat)
+
+    df["spend_bucket"] = df["category"].map(_resolve_spend_bucket)
+    df["is_internal"] = df["category"].isin(INTERNAL_NON_CASHFLOW_CATEGORIES) | (
+        df["category"].map(lambda c: norm_buckets.get(c) == "Internal")
+    )
+    df["is_capital_expense"] = (
+        df["category"].isin(CAPITAL_LENDING_EXPENSE_CATEGORIES)
+        | (df["spend_bucket"] == SPEND_BUCKET_CAPITAL)
+    )
 
     df["account_id"] = df["account_id"].fillna("").astype(str)
     df["account_name"] = df["account_name"].fillna(df["account_id"]).astype(str)
