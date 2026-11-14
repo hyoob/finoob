@@ -23,27 +23,54 @@ ASPSP_REGISTRY = {
 }
 
 
-def is_configured():
-    """Returns True if [enable_banking] is configured in st.secrets and private key exists."""
+def _load_private_key_bytes():
+    """
+    Loads the Enable Banking RSA private key bytes in priority order:
+    1. Inline `st.secrets["enable_banking"]["private_key"]`
+    2. systemd LoadCredential (`$CREDENTIALS_DIRECTORY/eb_private_key`)
+    3. File path `st.secrets["enable_banking"]["private_key_path"]`
+    Returns bytes or None if not available.
+    """
     eb = st.secrets.get("enable_banking")
-    if not eb or "app_id" not in eb or "private_key_path" not in eb:
-        return False
-    key_path = eb["private_key_path"]
-    if not os.path.isabs(key_path):
-        key_path = os.path.join(config.BASE_DIR, key_path)
-    return os.path.exists(key_path)
+    if not eb or "app_id" not in eb:
+        return None
+
+    inline_key = str(eb.get("private_key") or "").strip()
+    if inline_key:
+        return inline_key.replace("\\n", "\n").encode("utf-8")
+
+    cred_dir = os.environ.get("CREDENTIALS_DIRECTORY")
+    if cred_dir:
+        cred_path = os.path.join(cred_dir, "eb_private_key")
+        if os.path.exists(cred_path):
+            with open(cred_path, "rb") as f:
+                return f.read()
+
+    key_path = str(eb.get("private_key_path") or "").strip()
+    if key_path:
+        if not os.path.isabs(key_path):
+            key_path = os.path.join(config.BASE_DIR, key_path)
+        if os.path.exists(key_path):
+            with open(key_path, "rb") as f:
+                return f.read()
+
+    return None
+
+
+def is_configured():
+    """Returns True if [enable_banking] is configured in st.secrets and private key is available."""
+    return _load_private_key_bytes() is not None
 
 
 def _get_jwt_token():
     """Signs and returns a short-lived RS256 JWT for Enable Banking API authentication."""
     eb = st.secrets["enable_banking"]
     app_id = eb["app_id"]
-    key_path = eb["private_key_path"]
-    if not os.path.isabs(key_path):
-        key_path = os.path.join(config.BASE_DIR, key_path)
+    key_bytes = _load_private_key_bytes()
+    if not key_bytes:
+        raise RuntimeError("Enable Banking private key is not configured.")
 
-    with open(key_path, "rb") as f:
-        signer = crypt.RSASigner.from_string(f.read(), key_id=app_id)
+    signer = crypt.RSASigner.from_string(key_bytes, key_id=app_id)
 
     now = int(time.time())
     payload = {
