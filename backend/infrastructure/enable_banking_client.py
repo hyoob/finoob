@@ -100,6 +100,12 @@ def _api_request(method, path, body=None, params=None):
         ) from e
 
 
+def get_redirect_url():
+    """Returns the configured OAuth redirect URL from st.secrets."""
+    eb = st.secrets.get("enable_banking") or {}
+    return str(eb.get("redirect_url", "https://localhost:8501/")).strip()
+
+
 def start_authorization(bank_key, valid_days=179):
     """
     Initiates an AIS authorization flow for a bank ('ptsb', 'revolut', 'cmb').
@@ -109,8 +115,7 @@ def start_authorization(bank_key, valid_days=179):
     if not aspsp:
         raise ValueError(f"Bank '{bank_key}' is not supported by Enable Banking integration.")
 
-    eb = st.secrets["enable_banking"]
-    redirect_url = eb.get("redirect_url", "https://localhost:8501/")
+    redirect_url = get_redirect_url()
     valid_until = (datetime.now(timezone.utc) + timedelta(days=valid_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     body = {

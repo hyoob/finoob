@@ -17,6 +17,13 @@ if "_dashboard_modules_reloaded_v5" not in st.session_state:
     st.session_state["_dashboard_modules_reloaded_v5"] = True
 
 ui.init_page("Dashboard")
+
+# Forward Enable Banking OAuth callback (?code=...) on root '/' directly to Import & Sync
+if st.query_params.get("code"):
+    st.session_state["eb_pending_oauth_code"] = str(st.query_params.get("code")).strip()
+    st.query_params.clear()
+    st.switch_page("pages/import_sync.py")
+
 st.title("📊 Financial Dashboard & Insights")
 
 

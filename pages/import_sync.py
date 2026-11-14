@@ -1448,6 +1448,66 @@ def _render_single_account_editor_and_save(new_transactions, warning, latest_bq_
                 st.error(f"🚨 Net worth table update failed: {error_msg}")
 
 
+# === AUTOMATIC OPEN BANKING OAUTH CALLBACK HANDLER ===
+if enable_banking_client.is_configured():
+    _incoming_oauth_code = st.session_state.pop("eb_pending_oauth_code", None)
+    if not _incoming_oauth_code and st.query_params.get("code"):
+        _incoming_oauth_code = str(st.query_params.get("code")).strip()
+        st.query_params.clear()
+
+    if _incoming_oauth_code:
+        try:
+            with st.spinner("🔗 Completing Open Banking authorization and creating 180-day session..."):
+                _auto_session_data = enable_banking_client.create_session(_incoming_oauth_code)
+            st.session_state.eb_session_data = _auto_session_data
+            st.session_state.eb_oauth_banner_active = True
+        except Exception as _oauth_err:
+            st.error(f"🚨 Automatic Open Banking session activation failed: {_oauth_err}")
+
+    if st.session_state.get("eb_oauth_banner_active") and st.session_state.get("eb_session_data"):
+        _banner_session = st.session_state.eb_session_data
+        _banner_accs = _banner_session.get("accounts", [])
+        _banner_valid_until = _banner_session.get("access", {}).get("valid_until", "")
+        with st.container(border=True):
+            b_hdr1, b_hdr2 = st.columns([5, 1])
+            b_hdr1.subheader(f"✅ Open Banking Session Activated ({len(_banner_accs)} Account(s) Found)")
+            if b_hdr2.button("✖️ Dismiss", key="dismiss_eb_oauth_banner", use_container_width=True):
+                st.session_state.eb_oauth_banner_active = False
+                st.rerun()
+
+            if not _banner_accs:
+                st.warning(
+                    "⚠️ Session created, but **0 bank accounts** were returned by Enable Banking. "
+                    "Ensure the account is whitelisted in the Enable Banking Control Panel (*Application → Link accounts*) "
+                    "and selected on the bank's consent screen."
+                )
+            else:
+                st.caption("Map each authorized bank account below to its corresponding Finoob account:")
+                for _b_idx, _eb_acc in enumerate(_banner_accs):
+                    _uid = _eb_acc.get("uid")
+                    _iban = (_eb_acc.get("account_id") or {}).get("iban") or _eb_acc.get("iban") or "N/A"
+                    _name = _eb_acc.get("name") or _eb_acc.get("details") or "Account"
+                    _curr = _eb_acc.get("currency", "EUR")
+
+                    bm1, bm2, bm3 = st.columns([2, 2, 1])
+                    bm1.markdown(f"**{_name}** (`{_iban}` - {_curr})  \nUID: `{_uid}`")
+                    _target_acc = bm2.selectbox(
+                        "Map to Finoob Account:",
+                        options=list(account_map.keys()),
+                        format_func=lambda k: f"{account_map[k]} ({k})",
+                        key=f"eb_banner_map_target_{_b_idx}",
+                    )
+                    bm3.write("")
+                    if bm3.button("🔗 Save Mapping", key=f"eb_banner_save_map_{_b_idx}", type="primary", use_container_width=True):
+                        if accounts_service.link_enable_banking_account(
+                            _target_acc, _uid, valid_until=_banner_valid_until, iban=_iban
+                        ):
+                            st.success(f"Linked `{_iban}` → **{account_map[_target_acc]}**!")
+                            st.cache_data.clear()
+                        else:
+                            st.error("Failed to save mapping.")
+
+
 # === TOP-LEVEL WORKFLOW TABS ===
 if enable_banking_client.is_configured():
     tab_sync, tab_csv, tab_conn = st.tabs([
@@ -2053,17 +2113,19 @@ if tab_conn is not None:
             except Exception as e:
                 st.error(f"Failed to generate link: {e}")
 
+        _configured_redirect_url = enable_banking_client.get_redirect_url()
         if st.session_state.get("eb_auth_url"):
             st.info(
                 f"👉 **[Click here to authorize with {bank_labels[selected_bank]}]({st.session_state.eb_auth_url})**\n\n"
-                "After approving in your bank app, your browser will redirect to `https://localhost:8501/?code=...`. "
-                "Copy that full URL from your browser's address bar and paste it below:"
+                f"After approving in your bank app, your browser will redirect to `{_configured_redirect_url}?code=...` "
+                "and Finoob will **automatically activate the session**. "
+                "*(Or if you authorized on a different device, paste the redirect URL or `code` below)*:"
             )
 
         code_col1, code_col2 = st.columns([3, 1])
         redirect_input = code_col1.text_input(
-            "2. Paste Redirect URL (or `code`):",
-            placeholder="https://localhost:8501/?code=...",
+            "2. Paste Redirect URL (or `code` — optional if redirected automatically):",
+            placeholder=f"{_configured_redirect_url}?code=...",
             key="eb_redirect_input",
         )
         code_col2.write("")
