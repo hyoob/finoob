@@ -356,7 +356,7 @@ def get_accounts_table_config():
         "bank": st.column_config.TextColumn("Bank", width="small"),
         "account_type": st.column_config.TextColumn("Type", width="small"),
         "balance": st.column_config.NumberColumn(
-            "Balance (BQ)",
+            "Balance",
             width="small"
         ),
         "last_updated": st.column_config.TextColumn("Latest Tx Date", width="medium"),

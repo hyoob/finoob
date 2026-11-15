@@ -20,17 +20,13 @@ ui.init_page("Cash & Accounts")
 categories, category_options, account_map, table_id = app_service.load_global_context()
 
 st.title("💳 Cash & Accounts")
-st.caption(
-    f"Account metadata is managed in `{config.ACCOUNTS_TABLE_ID}` and balances are resolved dynamically "
-    f"from the latest transaction in `{table_id}`."
-)
 
 if st.session_state.get("accounts_save_banner"):
     st.success(st.session_state.pop("accounts_save_banner"))
 
 tab_overview, tab_manage = st.tabs([
     "🏦 Accounts Overview & Sync Audit",
-    "✏️ Manage Accounts (`dim_accounts`)",
+    "✏️ Manage Accounts",
 ])
 
 # =====================================================================
@@ -45,7 +41,7 @@ with tab_overview:
     savings_total = float(df[df["account_type"] == "Savings"]["balance"].sum()) if not df.empty and "account_type" in df.columns else 0.0
 
     k1, k2, k3 = st.columns(3)
-    k1.metric("Total Cash & Savings (BQ)", f"€{total_balance:,.2f}")
+    k1.metric("Total Cash & Savings", f"€{total_balance:,.2f}")
     k2.metric("Checking / Cash Accounts", f"€{cash_total:,.2f}")
     k3.metric("Savings Accounts", f"€{savings_total:,.2f}")
 
@@ -86,12 +82,14 @@ with tab_overview:
 
     st.divider()
     st.subheader("🩺 Account Sync & Balance Audit")
-    st.caption(
-        f"Compare each account's latest balance in `{table_id}` against its live Open Banking API balance."
-    )
 
-    if st.button("🔍 Run Balance & Sync Audit", type="primary", key="run_balance_audit_btn"):
-        with st.spinner("Auditing balances across BigQuery and Live Bank APIs..."):
+    if st.button(
+        "🔍 Run Balance & Sync Audit",
+        type="primary",
+        key="run_balance_audit_btn",
+        help="Compares each account's latest recorded balance against its live Open Banking API balance.",
+    ):
+        with st.spinner("Auditing balances against Live Bank APIs..."):
             st.session_state.balance_audit_df = accounts_service.run_accounts_health_audit(
                 table_id, show_archived=True
             )
@@ -118,26 +116,23 @@ with tab_overview:
             ],
             column_config={
                 "account_name": st.column_config.TextColumn("Account"),
-                "bq_balance": st.column_config.NumberColumn("BigQuery Latest Balance", format="euro", step=0.01),
-                "live_bank_balance": st.column_config.NumberColumn("Live Bank API Balance", format="euro", step=0.01),
-                "bank_diff": st.column_config.NumberColumn("Bank vs BQ Diff", format="euro", step=0.01),
+                "bq_balance": st.column_config.NumberColumn("Recorded Balance", format="euro", step=0.01),
+                "live_bank_balance": st.column_config.NumberColumn("Live Bank Balance", format="euro", step=0.01),
+                "bank_diff": st.column_config.NumberColumn("Difference", format="euro", step=0.01),
                 "bank_balance_type": st.column_config.TextColumn("API Balance Type"),
-                "last_bq_date": st.column_config.TextColumn("Last BQ Tx Date"),
+                "last_bq_date": st.column_config.TextColumn("Last Tx Date"),
                 "status": st.column_config.TextColumn("Sync Status"),
             },
         )
 
 
 # =====================================================================
-# TAB 2: MANAGE ACCOUNTS (finoob.accounts.dim_accounts)
+# TAB 2: MANAGE ACCOUNTS (accounts.dim_accounts)
 # =====================================================================
 with tab_manage:
-    st.markdown("#### ✏️ Manage `dim_accounts` (BigQuery Dimension Table)")
-    st.caption(
-        f"Target BigQuery Table: `{config.ACCOUNTS_TABLE_ID}` — Add a new bank account at the bottom, "
-        "rename a **Display Name** (`account_name`), change its **Wealth Category** (`Cash` vs `Savings`), "
-        "or uncheck **Active** to archive an account. Keep existing **Canonical IDs** (`account_id`) unchanged "
-        "so they remain linked to historical rows in `transactions`."
+    st.markdown(
+        "#### ✏️ Manage Accounts",
+        help="Table: `accounts.dim_accounts`. Keep existing Canonical IDs (`account_id`) unchanged so they remain linked to historical transactions.",
     )
 
     dim_accounts_df = accounts_service.get_dim_accounts_df(config.ACCOUNTS_TABLE_ID)
@@ -152,7 +147,7 @@ with tab_manage:
     )
 
     if st.button("💾 Save Accounts & Refresh Net Worth", type="primary", key="save_dim_accounts_btn"):
-        with st.spinner("Saving `dim_accounts` to BigQuery and refreshing Net Worth..."):
+        with st.spinner("Saving accounts and refreshing Net Worth..."):
             ok, msg = accounts_service.save_dim_accounts(edited_accounts_df, config.ACCOUNTS_TABLE_ID)
         if ok:
             st.session_state.pop("balance_audit_df", None)

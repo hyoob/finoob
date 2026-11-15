@@ -174,17 +174,17 @@ def add_rules_batch(rules_list):
             bucket_map=bucket_map,
         )
         if not ok:
-            return False, f"Failed to save rule(s) to BigQuery: {err_or_msg}", get_all_categories()
+            return False, f"Failed to save rule(s): {err_or_msg}", get_all_categories()
 
         clear_categories_cache()
-        return True, f"Saved {added_or_updated} rule(s) to BigQuery.", categories
+        return True, f"Saved {added_or_updated} rule(s).", categories
     except Exception as e:
         return False, f"Failed to save rule(s): {e}", get_all_categories()
 
 
 def add_category(category_name, spend_bucket=None):
     """
-    Creates a new empty category in `finoob.categories.dim_categories` if it doesn't already exist.
+    Creates a new empty category in `categories.dim_categories` if it doesn't already exist.
     Returns (success: bool, message: str, updated_categories: dict).
     """
     name = str(category_name or "").strip()
@@ -206,9 +206,9 @@ def add_category(category_name, spend_bucket=None):
             bucket_map=bucket_map,
         )
         if not ok:
-            return False, f"Failed to create category in BigQuery: {err_or_msg}", get_all_categories()
+            return False, f"Failed to create category: {err_or_msg}", get_all_categories()
 
         clear_categories_cache()
-        return True, f"Created category '{name}' in BigQuery.", categories
+        return True, f"Created category '{name}'.", categories
     except Exception as e:
         return False, f"Failed to create category: {e}", get_all_categories()

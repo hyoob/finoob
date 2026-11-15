@@ -21,7 +21,7 @@ def _deduplicate_and_categorize(df, table_id, account_id, category_data):
         new_transactions = df.copy()
         if "balance" not in new_transactions.columns and not new_transactions.empty:
             new_transactions["balance"] = (new_transactions["credit"] - new_transactions["debit"]).cumsum()
-        warning = "No transactions found in BigQuery. Keeping all rows."
+        warning = "No prior transactions found for this account. Keeping all rows."
         latest_bq_date = None
 
     if not new_transactions.empty:

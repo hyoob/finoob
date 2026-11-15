@@ -11,9 +11,7 @@ ui.init_page("SQL Explorer")
 st.title("🔍 SQL Explorer")
 
 env_badge = "🔴 **PRODUCTION** (`data/finoob.duckdb`)" if config.ENV == "prod" else "🟢 **DEV SANDBOX** (`data/finoob_dev.duckdb`)"
-st.caption(
-    f"Active Database: {env_badge} — Run instant DuckDB SQL queries across all tables and views (~2–10 ms)."
-)
+st.caption(f"Active Database: {env_badge}")
 
 PRESET_QUERIES = {
     "📋 Recent Transactions (Last 50)": """SELECT
@@ -157,9 +155,10 @@ if "sql_explorer_last_preset" not in st.session_state or st.session_state.sql_ex
     st.session_state.sql_explorer_editor = PRESET_QUERIES[selected_preset]
 
 sql_input = st.text_area(
-    "SQL Query (supports both `schema.table` and BigQuery-style `` `finoob.schema.table` `` syntax):",
+    "SQL Query:",
     height=200,
     key="sql_explorer_editor",
+    help="Supports DuckDB `schema.table` syntax.",
 )
 
 ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([1.2, 2, 2])

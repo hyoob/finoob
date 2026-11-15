@@ -13,10 +13,6 @@ ui.init_page("Categories & Backfill")
 categories, category_options, account_map, table_id = app_service.load_global_context()
 
 st.title("🏷️ Categories & Backfill Tools")
-st.caption(
-    "Manage your category & keyword rules, or run ad-hoc backfill edits on existing BigQuery transactions "
-    "(uncategorized rows and unlinked reimbursements)."
-)
 
 # Persistent toast / status notifications
 if "pending_success" in st.session_state:
@@ -78,7 +74,7 @@ with tab_manage:
                     )
                     if success:
                         st.cache_data.clear()
-                        st.session_state.pending_success = f"Added '{new_cat_name}' ({new_cat_bucket}) to BigQuery!"
+                        st.session_state.pending_success = f"Added '{new_cat_name}' ({new_cat_bucket})!"
                         st.rerun()
                     else:
                         st.error(message)
@@ -103,16 +99,14 @@ with tab_manage:
                 )
                 if success:
                     st.cache_data.clear()
-                    st.session_state.pending_success = f"Removed '{cat_to_remove}' from BigQuery!"
+                    st.session_state.pending_success = f"Removed '{cat_to_remove}'!"
                     st.rerun()
                 else:
                     st.error(message)
 
-    st.subheader("📂 Manage Keywords (`finoob.categories.dim_categories`)")
-    st.caption(
-        "💡 **Matching tips:** Keywords match whole words (case-insensitive) by default. "
-        "Use `*` at the start/end for partial word matches (e.g. `DELIVERO*`, `*SPAR*`). "
-        "Set **Min / Max Amount** (or set both to the same value for an exact amount) to create amount-specific rules."
+    st.subheader(
+        "📂 Manage Keywords",
+        help="Keywords match whole words (case-insensitive) by default. Use `*` at the start/end for partial word matches (e.g. `DELIVERO*`, `*SPAR*`). Set Min / Max Amount for amount-specific rules.",
     )
 
     all_categories = list(st.session_state.manage_cats.keys())
@@ -197,7 +191,7 @@ with tab_manage:
             msg_details = categorization_logic.get_keyword_changes_summary(original, current)
             msg = f"Saved {selected_view}: {msg_details}" if msg_details else f"Saved {selected_view}."
         else:
-            msg = "Global rule changes saved to BigQuery."
+            msg = "Global rule changes saved."
 
         success, error_text = rules_service.update_rules(
             st.session_state.manage_cats,
@@ -217,11 +211,10 @@ with tab_manage:
 # =====================================================================
 with tab_categorize:
     st.subheader("🏷️ Categorize Existing Transactions")
-    st.caption("Fetch a batch of uncategorized (`TBD` or empty) transactions already in BigQuery to edit.")
 
     account_id_cat = ui.pick_account(
         account_map,
-        "Select the account to fetch uncategorized transactions from:",
+        "Select Account:",
         key="categorize_account_picker",
         on_change=ui.clear_session_state_data,
         stop_if_empty=False,
@@ -237,7 +230,6 @@ with tab_categorize:
                     st.info("No uncategorized transactions found! 🎉")
 
         if "uncategorized_df" in st.session_state:
-            st.write("Edit the categories and labels below. Click **Save Category Updates** when done.")
             editor_config = ui.get_categorization_editor_config(category_options)
 
             edited_uncat_df = st.data_editor(
@@ -268,9 +260,6 @@ with tab_categorize:
 # =====================================================================
 with tab_reimb:
     st.subheader("💰 Link Existing Reimbursements")
-    st.caption(
-        "Link incoming `Reimbursement` credit transactions already in BigQuery to their original expense row."
-    )
 
     grid_version = st.session_state.get("reimb_grid_version", 0)
     reimb_grid_key = f"reimb_grid_{grid_version}"

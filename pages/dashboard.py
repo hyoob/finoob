@@ -362,7 +362,7 @@ def _render_projection_simulator_fragment(
 
 if "dashboard_analytics_bundle" not in st.session_state:
     try:
-        with st.spinner("Loading financial analytics warehouse from BigQuery..."):
+        with st.spinner("Loading financial dashboard..."):
             st.session_state.dashboard_analytics_bundle = _load_full_dashboard_bundle(
                 config.MONTHLY_FINANCE_VIEW_ID,
                 config.YEARLY_FINANCE_VIEW_ID,
@@ -568,15 +568,14 @@ with tab_pulse:
             )
 
     st.divider()
-    st.subheader("📅 Monthly Financial Performance & Net Worth")
     mode_label = (
         "Core Operating Spend (excluding Capital & Lending outflows)"
         if exclude_capital
         else "Gross Spend (including Capital & Lending outflows)"
     )
-    st.caption(
-        f"Currently displaying **{mode_label}**. The **Capital & Lending** column shows the non-operating capital outflows in each month. "
-        "Internal self-transfers (`Transfer from/to self`) and `Reimbursement` rows are always excluded."
+    st.subheader(
+        "📅 Monthly Financial Performance & Net Worth",
+        help=f"Displaying {mode_label}. Internal self-transfers (`Transfer from/to self`) and `Reimbursement` rows are always excluded.",
     )
     ui.render_monthly_stats_table(filtered_df)
 
@@ -734,10 +733,9 @@ with tab_income:
             )
 
     st.divider()
-    st.subheader("📆 Annual Financial Scorecard (2013 – Present)")
-    st.caption(
-        "Combines `reporting.view_yearly_finance` with Core vs. Capital/Lending expense separation. "
-        "Notice how excluding one-off `House` and `Loan` capital outflows reveals true annual operating savings rates."
+    st.subheader(
+        "📆 Annual Financial Scorecard (2013 – Present)",
+        help="Separates Core Operating Spend from one-off Capital & Lending outflows (`House`, `Loan`) to show true annual operating savings rates.",
     )
     ui.render_yearly_scorecard_table(yearly_df)
 
@@ -886,7 +884,7 @@ with tab_future:
                     },
                 )
         else:
-            st.info("No future unvested GSU rows found in `finoob.assets.stocks`.")
+            st.info("No future unvested GSU rows found in `assets.stocks`.")
 
     with det_c2:
         st.markdown("**🏠 Scheduled Mortgage Amortization Horizon**")
@@ -908,10 +906,9 @@ with tab_future:
             )
 
     st.divider()
-    st.subheader("🔮 Interactive 1–15 Year Net Worth Trajectory Simulator")
-    st.caption(
-        "Combines your **actual current balances**, **scheduled future GSU vests**, and **scheduled mortgage principal paydown** "
-        "with customizable savings and market growth assumptions."
+    st.subheader(
+        "🔮 Interactive 1–15 Year Net Worth Trajectory Simulator",
+        help="Combines your current balances, scheduled future GSU vests, and scheduled mortgage principal paydown with customizable savings and market growth assumptions.",
     )
     _render_projection_simulator_fragment(
         nw_breakdown_df=nw_breakdown_df,

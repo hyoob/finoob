@@ -177,13 +177,13 @@ def run_accounts_health_audit(table_id, show_archived=False):
 
         if api_bal is not None and bq_bal is not None:
             if abs(bank_diff) <= 0.01:
-                status = "✅ Fully Synced (BQ = Bank)"
+                status = "✅ Fully Synced (DB = Bank)"
             else:
-                status = f"🔄 Pending Import (Bank vs BQ: {bank_diff:+,.2f} €)"
+                status = f"🔄 Pending Import (Bank vs DB: {bank_diff:+,.2f} €)"
         elif bq_bal is not None:
-            status = "✅ Tracked via CSV / BQ"
+            status = "✅ Tracked via CSV / DB"
         else:
-            status = "ℹ️ No Transactions in BQ Yet"
+            status = "ℹ️ No Transactions Yet"
 
         audit_rows.append({
             "account_id": acc_id,

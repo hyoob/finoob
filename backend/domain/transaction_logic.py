@@ -128,7 +128,7 @@ def get_new_transactions(latest_bq_tx, df, recent_bq_txs=None):
             ).cumsum()
 
         warning_message = (
-            "⚠️ Could not find the last BQ transaction in the CSV/API data. "
+            "⚠️ Could not find the last recorded transaction in the CSV/API data. "
             "Keeping all rows."
         )
 
@@ -296,7 +296,7 @@ def validate_import_batch(
         if bank_ok is False:
             type_label = f" ({bank_bal_type})" if bank_bal_type else ""
             empty_issues.append(
-                f"Live Bank Balance Mismatch: BigQuery Balance ({start_balance:,.2f} €) does not match "
+                f"Live Bank Balance Mismatch: Recorded Balance ({start_balance:,.2f} €) does not match "
                 f"Live Bank API Balance{type_label} ({effective_bank_booked_bal:,.2f} €, diff: {bank_diff:+,.2f} €)."
             )
         return {
@@ -384,11 +384,11 @@ def validate_import_batch(
     issues = []
     if not marker_found:
         issues.append(
-            f"Handshake Marker Missing: {marker_warning} Importing without matching the last BigQuery transaction risks inserting duplicates or missing a gap."
+            f"Handshake Marker Missing: {marker_warning} Importing without matching the last recorded transaction risks inserting duplicates or missing a gap."
         )
     if not continuity_ok:
         issues.append(
-            f"Boundary Balance Mismatch: Last BQ Balance ({start_balance:,.2f} €) + Batch Net Change ({net_change:+,.2f} €) "
+            f"Boundary Balance Mismatch: Last Recorded Balance ({start_balance:,.2f} €) + Batch Net Change ({net_change:+,.2f} €) "
             f"= {expected_closing_balance:,.2f} €, but Batch Closing Balance is {actual_closing_balance:,.2f} € (diff: {continuity_diff:+,.2f} €)."
         )
     if not row_continuity_ok:

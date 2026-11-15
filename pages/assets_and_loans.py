@@ -18,9 +18,6 @@ if "_assets_modules_reloaded_v1" not in st.session_state:
 
 ui.init_page("Assets & Investments")
 st.title("📈 Assets & Investments")
-st.caption(
-    "Manage native DuckDB asset & receivable tables (`dim_loans`, `dim_property_assets`, `stocks`, and `raw_pension_gsheet`)."
-)
 
 if st.session_state.get("assets_save_banner"):
     st.success(st.session_state.pop("assets_save_banner"))
@@ -33,7 +30,7 @@ tab_loans, tab_property, tab_stocks, tab_pension = st.tabs([
 ])
 
 # =====================================================================
-# TAB 1: LOANS & RECEIVABLES (finoob.assets.dim_loans)
+# TAB 1: LOANS & RECEIVABLES (assets.dim_loans)
 # =====================================================================
 with tab_loans:
     tx_table_id = config.get_table_id()
@@ -42,7 +39,7 @@ with tab_loans:
         loan_tx_df = assets_service.get_loan_transactions(tx_table_id, config.LOANS_TABLE_ID)
         loan_receivables_df = assets_service.get_loan_receivables(config.LOAN_RECEIVABLES_VIEW_ID)
     except Exception as e:
-        st.error(f"Error loading loans data from BigQuery: {e}")
+        st.error(f"Error loading loans data: {e}")
         st.stop()
 
     summary_df, loan_kpis = assets_logic.calculate_loan_portfolio_summary(loans_df, loan_tx_df)
@@ -108,11 +105,9 @@ with tab_loans:
         )
 
     st.divider()
-    st.markdown("#### ✏️ Manage `dim_loans` Table")
-    st.caption(
-        f"Target BigQuery Table: `{config.LOANS_TABLE_ID}` — Edit existing loans, add a new row at the bottom, "
-        "or select and delete a row. Make sure **Funding Label** and **Repayment Label** match the exact `label` "
-        "values used on your bank transactions so `view_loan_receivables` automatically tracks balances."
+    st.markdown(
+        "#### ✏️ Manage Loans",
+        help="Table: `assets.dim_loans`. Ensure Funding Label and Repayment Label match the exact `label` values on your bank transactions.",
     )
 
     edited_loans_df = st.data_editor(
@@ -125,7 +120,7 @@ with tab_loans:
     )
 
     if st.button("💾 Save Loans & Refresh Net Worth", type="primary", key="save_dim_loans_btn"):
-        with st.spinner("Saving `dim_loans` to BigQuery and refreshing Net Worth..."):
+        with st.spinner("Saving loans and refreshing Net Worth..."):
             ok, msg = assets_service.save_dim_loans(config.LOANS_TABLE_ID, edited_loans_df)
         if ok:
             st.session_state.assets_save_banner = msg
@@ -193,14 +188,14 @@ with tab_loans:
 
 
 # =====================================================================
-# TAB 2: PROPERTY VALUATIONS (finoob.assets.dim_property_assets)
+# TAB 2: PROPERTY VALUATIONS (assets.dim_property_assets)
 # =====================================================================
 with tab_property:
     try:
         prop_df = assets_service.get_dim_property_assets(config.PROPERTY_ASSETS_TABLE_ID)
         mortgage_sched_df = mortgage_service.get_mortgage_schedule(config.MORTGAGE_SCHEDULE_VIEW_ID)
     except Exception as e:
-        st.error(f"Error loading property valuation data from BigQuery: {e}")
+        st.error(f"Error loading property valuation data: {e}")
         st.stop()
 
     prop_kpis = assets_logic.calculate_property_summary(prop_df, mortgage_sched_df)
@@ -229,11 +224,9 @@ with tab_property:
     )
 
     st.divider()
-    st.markdown("#### ✏️ Manage `dim_property_assets` Table")
-    st.caption(
-        f"Target BigQuery Table: `{config.PROPERTY_ASSETS_TABLE_ID}` — To record a new property valuation without "
-        "overwriting historical Net Worth months, add a new row for the same `Property Name` (e.g. `House`) with "
-        "the new `Valuation Date` and `Valuation Amount`."
+    st.markdown(
+        "#### ✏️ Manage Property Valuations",
+        help="Table: `assets.dim_property_assets`. Add a new row with a newer Valuation Date to record a valuation update without overwriting prior Net Worth months.",
     )
 
     edited_prop_df = st.data_editor(
@@ -246,7 +239,7 @@ with tab_property:
     )
 
     if st.button("💾 Save Property Valuations & Refresh Net Worth", type="primary", key="save_dim_prop_btn"):
-        with st.spinner("Saving `dim_property_assets` to BigQuery and refreshing Net Worth..."):
+        with st.spinner("Saving property valuations and refreshing Net Worth..."):
             ok, msg = assets_service.save_dim_property_assets(config.PROPERTY_ASSETS_TABLE_ID, edited_prop_df)
         if ok:
             st.session_state.assets_save_banner = msg
@@ -259,14 +252,15 @@ with tab_property:
 # TAB 3: STOCKS & VESTING (NATIVE DUCKDB TABLE + OPTIONAL GSHEET SYNC)
 # =====================================================================
 with tab_stocks:
-    hdr_col1, hdr_col2 = st.columns([3, 1])
-    with hdr_col1:
-        st.caption(
-            f"DuckDB Table: `assets.stocks` • Live Ticker: `{config.STOCK_TICKER}`"
-        )
+    _, hdr_col2 = st.columns([3, 1])
     with hdr_col2:
-        if st.button("🔄 Sync from Google Sheet", use_container_width=True, key="sync_stocks_gsheet_btn"):
-            with st.spinner("Pulling latest Stocks rows from Google Sheets into DuckDB..."):
+        if st.button(
+            "🔄 Sync from Google Sheet",
+            use_container_width=True,
+            key="sync_stocks_gsheet_btn",
+            help="Pulls the latest Stocks & Vesting schedule from Google Sheets into `assets.stocks`.",
+        ):
+            with st.spinner("Pulling latest Stocks rows from Google Sheets..."):
                 ok, msg = stocks_service.sync_stocks_from_google_sheet()
             if ok:
                 st.session_state.assets_save_banner = f"🎉 {msg}"
@@ -299,7 +293,7 @@ with tab_stocks:
         ui.render_stock_visualizations(stocks_df)
 
         st.divider()
-        with st.expander("✏️ Edit Stocks & Vesting Schedule (`assets.stocks`)", expanded=False):
+        with st.expander("✏️ Edit Stocks & Vesting Schedule", expanded=False):
             edit_stocks_df = stocks_df.copy()
             if "Date" in edit_stocks_df.columns:
                 edit_stocks_df["Date"] = pd.to_datetime(edit_stocks_df["Date"], errors="coerce").dt.date
@@ -311,7 +305,7 @@ with tab_stocks:
                 key="stocks_table_editor",
             )
             if st.button("💾 Save Stocks Table & Refresh Net Worth", type="primary", key="save_stocks_btn"):
-                with st.spinner("Saving `assets.stocks` to DuckDB and refreshing Net Worth..."):
+                with st.spinner("Saving stocks table and refreshing Net Worth..."):
                     ok, msg = stocks_service.save_stocks_data(edited_stocks_df)
                 if ok:
                     st.session_state.assets_save_banner = f"🎉 {msg}"
@@ -324,12 +318,15 @@ with tab_stocks:
 # TAB 4: PENSION OVERVIEW (NATIVE DUCKDB TABLE + OPTIONAL GSHEET SYNC)
 # =====================================================================
 with tab_pension:
-    p_hdr1, p_hdr2 = st.columns([3, 1])
-    with p_hdr1:
-        st.caption("DuckDB View: `assets.view_pension_monthly` (computed from `assets.raw_pension_gsheet`).")
+    _, p_hdr2 = st.columns([3, 1])
     with p_hdr2:
-        if st.button("🔄 Sync from Google Sheet", use_container_width=True, key="sync_pension_gsheet_btn"):
-            with st.spinner("Pulling latest Pension rows from Google Sheets into DuckDB..."):
+        if st.button(
+            "🔄 Sync from Google Sheet",
+            use_container_width=True,
+            key="sync_pension_gsheet_btn",
+            help="Pulls the latest Pension contributions from Google Sheets into `assets.raw_pension_gsheet`.",
+        ):
+            with st.spinner("Pulling latest Pension rows from Google Sheets..."):
                 ok, msg = assets_service.sync_pension_from_google_sheet()
             if ok:
                 st.session_state.assets_save_banner = f"🎉 {msg}"
@@ -372,7 +369,7 @@ with tab_pension:
     )
 
     st.divider()
-    st.markdown("#### 📅 Monthly Pension Balance & Contributions (`view_pension_monthly`)")
+    st.markdown("#### 📅 Monthly Pension Balance & Contributions")
     if pension_monthly_df.empty:
         st.info("No pension monthly data available.")
     else:
@@ -390,7 +387,7 @@ with tab_pension:
             },
         )
 
-    with st.expander("✏️ Edit Raw Pension Contributions (`assets.raw_pension_gsheet`)", expanded=False):
+    with st.expander("✏️ Edit Raw Pension Contributions", expanded=False):
         if pension_raw_df.empty:
             st.info("No raw pension rows found.")
         else:
@@ -402,7 +399,7 @@ with tab_pension:
                 key="pension_raw_editor",
             )
             if st.button("💾 Save Pension Contributions & Refresh Net Worth", type="primary", key="save_pension_btn"):
-                with st.spinner("Saving `assets.raw_pension_gsheet` to DuckDB and refreshing Net Worth..."):
+                with st.spinner("Saving pension contributions and refreshing Net Worth..."):
                     ok, msg = assets_service.save_pension_raw_data(edited_pension_df)
                 if ok:
                     st.session_state.assets_save_banner = f"🎉 {msg}"

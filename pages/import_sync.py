@@ -37,37 +37,36 @@ categories, category_options, account_map, table_id = app_service.load_global_co
 
 hdr_col1, hdr_col2, hdr_col3 = st.columns([2.1, 1.05, 1.05])
 hdr_col1.header("📥 Import New Transactions")
-hdr_col1.caption(f"Target BigQuery Table: `{table_id}`")
 if config.ENV == "dev":
     hdr_col2.write("")
     if hdr_col2.button(
         "⏪ Remove Last 100 Dev Txs",
-        help="Deletes the 100 most recent transactions from finoob.dev.transactions so you can test the Import workflow.",
+        help="Deletes the 100 most recent transactions from the dev sandbox (`finoob_dev.duckdb`) so you can test the Import workflow.",
         use_container_width=True,
         key="rewind_dev_sandbox_btn",
     ):
-        with st.spinner("Removing last 100 transactions from dev sandbox (`finoob.dev.transactions`)..."):
+        with st.spinner("Removing last 100 transactions from dev sandbox..."):
             removed_cnt = ingestion_service.rewind_dev_sandbox_transactions(count=100)
             st.session_state.pop("multi_api_sync_result", None)
             st.cache_data.clear()
             st.session_state.pending_rule_toast = (
-                f"⏪ Removed the last {removed_cnt} transactions from `finoob.dev.transactions`!"
+                f"⏪ Removed the last {removed_cnt} transactions from dev sandbox!"
             )
         st.rerun()
 
     hdr_col3.write("")
     if hdr_col3.button(
         "🔄 Reset Dev Sandbox from Prod",
-        help="Zero-copy clones all 6 mutable prod tables into the `finoob.dev` dataset (`transactions`, `dim_accounts`, `dim_categories`, `dim_loans`, `dim_property_assets`, `dim_mortgage_terms`).",
+        help="Copies `finoob.duckdb` into `finoob_dev.duckdb` so your dev sandbox matches production.",
         use_container_width=True,
         key="reset_dev_sandbox_btn",
     ):
-        with st.spinner("Cloning production tables into `finoob.dev` dataset..."):
+        with st.spinner("Resetting dev sandbox from production..."):
             ingestion_service.reset_dev_sandbox_from_prod()
             st.session_state.pop("multi_api_sync_result", None)
             st.cache_data.clear()
             st.session_state.pending_rule_toast = (
-                "✅ Dev sandbox dataset (`finoob.dev.*`) reset from `prod`!"
+                "✅ Dev sandbox (`finoob_dev.duckdb`) reset from production!"
             )
         st.rerun()
 
@@ -817,7 +816,7 @@ def _render_staged_reimbursements_summary(staged_links_key):
     if not staged_links:
         return
 
-    st.markdown("##### 💰 Staged Reimbursement Links (will be applied on Save to BigQuery)")
+    st.markdown("##### 💰 Staged Reimbursement Links (applied on Save)")
     for idx, link in enumerate(list(staged_links)):
         credits = link.get("credits", [])
         exp = link.get("expense", {})
@@ -1168,13 +1167,13 @@ def _render_single_account_editor_and_save(new_transactions, warning, latest_bq_
         if val["live_bank_balance"] is not None:
             if val["bank_balance_ok"]:
                 st.success(
-                    f"✅ No new transactions found. BigQuery balance ({val['start_balance']:,.2f} €) "
+                    f"✅ No new transactions found. Recorded balance ({val['start_balance']:,.2f} €) "
                     f"matches Live Bank Balance ({val['live_bank_balance']:,.2f} €)."
                 )
             else:
                 st.error(
                     f"🚨 No new transactions after {latest_bq_date.date() if latest_bq_date else 'last sync'}, "
-                    f"but BigQuery balance ({val['start_balance']:,.2f} €) does NOT match Live Bank Balance "
+                    f"but Recorded balance ({val['start_balance']:,.2f} €) does NOT match Live Bank Balance "
                     f"({val['live_bank_balance']:,.2f} €, diff: {val['bank_balance_diff']:+,.2f} €)! "
                     "Check for missing historical transactions in this table."
                 )
@@ -1377,7 +1376,7 @@ def _render_single_account_editor_and_save(new_transactions, warning, latest_bq_
 
         st.markdown("#### 🛡️ Pre-Save Balance & Integrity Check")
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Last BQ Balance", f"{val['start_balance']:,.2f} €")
+        m1.metric("Last Recorded Balance", f"{val['start_balance']:,.2f} €")
         m2.metric("Batch Net Change", f"{val['net_change']:+,.2f} €")
         m3.metric(
             "Batch Closing Balance",
@@ -1412,7 +1411,7 @@ def _render_single_account_editor_and_save(new_transactions, warning, latest_bq_
                     st.dataframe(pd.DataFrame(val["row_breaks"]), use_container_width=True, hide_index=True)
 
             override_approved = st.checkbox(
-                "⚠️ I have reviewed the discrepancy/warning above and want to save to BigQuery anyway",
+                "⚠️ I have reviewed the discrepancy/warning above and want to save anyway",
                 value=False,
                 key=f"{key_prefix}_override_chk",
             )
@@ -1425,12 +1424,12 @@ def _render_single_account_editor_and_save(new_transactions, warning, latest_bq_
             else ""
         )
         if st.button(
-            f"💾 Save {len(edited_df)} transactions to BigQuery{reimb_btn_suffix}",
+            f"💾 Save {len(edited_df)} transactions{reimb_btn_suffix}",
             type="primary",
             disabled=not can_save,
             key=f"{key_prefix}_save_btn",
         ):
-            with st.spinner("Saving transactions to BigQuery..."):
+            with st.spinner("Saving transactions..."):
                 count, update_success, error_msg = ingestion_service.save_transactions_workflow(
                     table_id,
                     account_id,
@@ -1438,7 +1437,7 @@ def _render_single_account_editor_and_save(new_transactions, warning, latest_bq_
                     staged_reimb_links=staged_single_links,
                 )
             if update_success:
-                st.success(f"🎉 Successfully inserted {count} rows into `{table_id}`")
+                st.success(f"🎉 Successfully inserted {count} rows!")
                 st.session_state.pop(staged_reimb_key, None)
                 st.session_state.pop(f"bq_expenses_cache_{table_id}", None)
                 if ctx_key in st.session_state:
@@ -1534,10 +1533,6 @@ if tab_sync is not None:
                 "Switch to the **🔗 Manage Connections** tab to authorize and map your bank accounts."
             )
         else:
-            st.markdown(
-                "Fetch, categorize, reconcile, and save new transactions across all your linked bank accounts in one pass."
-            )
-
             col_sel, col_btn = st.columns([3, 1])
             selected_acc_ids = col_sel.multiselect(
                 "Accounts to sync:",
@@ -1617,7 +1612,7 @@ if tab_sync is not None:
                             st.error(
                                 f"🚨 **{emp_res['account_name']}**: 0 new transactions after "
                                 f"`{emp_res['latest_bq_date'].date() if emp_res['latest_bq_date'] else 'last sync'}`, "
-                                f"but BigQuery Balance (`{val['start_balance']:,.2f} €`) does NOT match Live Bank Balance "
+                                f"but Recorded Balance (`{val['start_balance']:,.2f} €`) does NOT match Live Bank Balance "
                                 f"(`{val['live_bank_balance']:,.2f} €`, diff: `{val['bank_balance_diff']:+,.2f} €`)!"
                             )
                         else:
@@ -1630,7 +1625,7 @@ if tab_sync is not None:
 
                     if clean_empty_names:
                         st.info(
-                            "✅ **Already up to date (0 new transactions, BQ = Live Bank):** "
+                            "✅ **Already up to date (0 new transactions, Balance = Live Bank):** "
                             + ", ".join(clean_empty_names)
                         )
 
@@ -1639,10 +1634,9 @@ if tab_sync is not None:
                     if not error_accs:
                         st.success("🎉 All synced accounts are up to date — no new transactions to import!")
                 else:
-                    st.markdown("#### 🛡️ Step 1: Multi-Account Reconciliation & Include Gate")
-                    st.caption(
-                        "Accounts that pass all 4 safety checks are checked (`Include in Save`) by default. "
-                        "Accounts with warnings are unchecked by default — tick `Include in Save` to override and include them."
+                    st.markdown(
+                        "#### 🛡️ Step 1: Multi-Account Reconciliation & Include Gate",
+                        help="Accounts that pass all 4 safety checks are checked (`Include in Save`) by default. Accounts with warnings are unchecked by default — tick `Include in Save` to override and include them.",
                     )
 
                     scorecard_rows = []
@@ -1706,14 +1700,14 @@ if tab_sync is not None:
                             "account_id": None,
                             "include": st.column_config.CheckboxColumn(
                                 "Include in Save",
-                                help="Check to include this account's new transactions in the unified editor & BigQuery save.",
+                                help="Check to include this account's new transactions in the unified editor & save.",
                                 width="small",
                                 pinned=True,
                             ),
                             "account_name": st.column_config.TextColumn("Account", width=None, pinned=True),
                             "new_count": st.column_config.NumberColumn("New Tx", format="localized", step=1, width="small"),
-                            "last_bq_date": st.column_config.TextColumn("Last BQ Date", width="small"),
-                            "start_balance": st.column_config.NumberColumn("Last BQ Balance", format="euro", step=0.01),
+                            "last_bq_date": st.column_config.TextColumn("Last Tx Date", width="small"),
+                            "start_balance": st.column_config.NumberColumn("Last Recorded Bal", format="euro", step=0.01),
                             "net_change": st.column_config.NumberColumn("Batch Net Change", format="euro", step=0.01),
                             "closing_balance": st.column_config.NumberColumn("Batch Closing Bal", format="euro", step=0.01),
                             "live_bank_balance": st.column_config.NumberColumn("Live Bank Bal", format="euro", step=0.01),
@@ -1985,12 +1979,12 @@ if tab_sync is not None:
                                 else ""
                             )
                             if st.button(
-                                f"💾 Save {num_tx} transaction(s) across {num_accs} account(s) to BigQuery{reimb_multi_suffix}",
+                                f"💾 Save {num_tx} transaction(s) across {num_accs} account(s){reimb_multi_suffix}",
                                 type="primary",
                                 key=f"multi_sync_save_btn_{run_id}",
                             ):
                                 with st.spinner(
-                                    f"Saving {num_tx} transaction(s) across {num_accs} account(s) to BigQuery..."
+                                    f"Saving {num_tx} transaction(s) across {num_accs} account(s)..."
                                 ):
                                     saved_rows, saved_accs, update_success, error_msg = (
                                         ingestion_service.save_multi_account_transactions_workflow(
@@ -2014,7 +2008,7 @@ if tab_sync is not None:
                                     )
                                     st.session_state.multi_sync_saved_banner = (
                                         f"🎉 Successfully inserted {saved_rows} transaction(s) across "
-                                        f"{saved_accs} account(s) into `{table_id}`{reimb_done_note} and refreshed Net Worth!"
+                                        f"{saved_accs} account(s){reimb_done_note} and refreshed Net Worth!"
                                     )
                                     st.cache_data.clear()
                                     st.rerun()
@@ -2071,9 +2065,9 @@ with tab_csv:
 # =====================================================================
 if tab_conn is not None:
     with tab_conn:
-        st.subheader("🔗 Manage Open Banking Connections (PTSB, Revolut, CMB)")
-        st.markdown(
-            "Authorize a 180-day Open Banking session with your bank and map its accounts to your Finoob accounts."
+        st.subheader(
+            "🔗 Manage Open Banking Connections (PTSB, Revolut, CMB)",
+            help="Authorize a 180-day Open Banking session with your bank and map its accounts to your Finoob accounts.",
         )
 
         # Show current connection status table

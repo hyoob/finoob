@@ -15,32 +15,27 @@ if "_liabilities_modules_reloaded_v1" not in st.session_state:
 
 ui.init_page("Liabilities")
 st.title("📉 Liabilities")
-st.caption(
-    "Manage your official mortgage dimension table (`finoob.liabilities.dim_mortgage_terms`) "
-    "or run read-only what-if payoff simulations in the Sandbox tab."
-)
 
 if st.session_state.get("liabilities_save_banner"):
     st.success(st.session_state.pop("liabilities_save_banner"))
 
-# Fetch Official Data from BigQuery
 try:
     terms_df = mortgage_service.get_mortgage_terms(config.MORTGAGE_TABLE_ID)
     schedule_df = mortgage_service.get_mortgage_schedule(config.MORTGAGE_SCHEDULE_VIEW_ID)
 except Exception as e:
-    st.error(f"Error loading mortgage data from BigQuery: {e}")
+    st.error(f"Error loading mortgage data: {e}")
     st.stop()
 
 defaults, saved_events_df = mortgage_service.get_simulation_defaults(terms_df)
 official_kpis = mortgage_logic.calculate_official_mortgage_kpis(terms_df, schedule_df)
 
 tab_official, tab_sandbox = st.tabs([
-    "🏠 Official Mortgage (`dim_mortgage_terms`)",
+    "🏠 Official Mortgage",
     "🧪 What-If Simulator (Sandbox)",
 ])
 
 # =====================================================================
-# TAB 1: OFFICIAL MORTGAGE & BIGQUERY DIMENSION TABLE
+# TAB 1: OFFICIAL MORTGAGE
 # =====================================================================
 with tab_official:
     # 1. Live Official KPIs
@@ -50,7 +45,7 @@ with tab_official:
         f"€{official_kpis['current_balance']:,.0f}",
         delta=f"-{official_kpis['repaid_pct']:.1f}% vs €{official_kpis['start_balance']:,.0f} initial",
         delta_color="normal",
-        help=f"Remaining balance as of {official_kpis['as_of_month']} from view_mortgage_full_schedule.",
+        help=f"Remaining balance as of {official_kpis['as_of_month']}.",
     )
     m2.metric(
         "Current Monthly Payment",
@@ -74,11 +69,10 @@ with tab_official:
 
     st.divider()
 
-    # 2. Edit Official BigQuery Table (dim_mortgage_terms + nested events)
-    st.markdown("#### ✏️ Manage `dim_mortgage_terms` (BigQuery Table)")
-    st.caption(
-        f"Target BigQuery Table: `{config.MORTGAGE_TABLE_ID}` — Edits made below update your official mortgage "
-        "record in BigQuery and feed directly into `view_mortgage_full_schedule` and Net Worth."
+    # 2. Edit Official Table (dim_mortgage_terms + nested events)
+    st.markdown(
+        "#### ✏️ Manage Mortgage Terms",
+        help="Table: `liabilities.dim_mortgage_terms`. Feeds directly into `view_mortgage_full_schedule` and Net Worth.",
     )
 
     st.markdown("##### 1. Base Contractual Terms")
@@ -91,10 +85,9 @@ with tab_official:
         key="official_mortgage_terms_editor",
     )
 
-    st.markdown("##### 2. Committed Mortgage Events (`dim_mortgage_terms.events`)")
-    st.caption(
-        "Record official changes to your mortgage (e.g. a new contractual monthly payment, rate change, or planned lump sum). "
-        "Note: historical lump sums already captured in bank transactions (`House Mortgage Overpayment`) are automatically reconciled by BigQuery."
+    st.markdown(
+        "##### 2. Committed Mortgage Events",
+        help="Record official rate changes, payment changes, or planned lump sums. Historical lump sums in bank transactions (`House Mortgage Overpayment`) are reconciled automatically.",
     )
     events_schema = pd.DataFrame(columns=["date", "event_type", "value"])
     edited_official_events_df = st.data_editor(
@@ -107,7 +100,7 @@ with tab_official:
     )
 
     if st.button("💾 Save Official Mortgage & Refresh Net Worth", type="primary", key="save_official_mortgage_btn"):
-        with st.spinner("Saving `dim_mortgage_terms` to BigQuery and refreshing Net Worth..."):
+        with st.spinner("Saving mortgage terms and refreshing Net Worth..."):
             success, msg = mortgage_service.save_mortgage_terms(
                 config.MORTGAGE_TABLE_ID,
                 edited_terms_df,
@@ -121,11 +114,10 @@ with tab_official:
 
     st.divider()
 
-    # 3. Official Amortization Schedule from BigQuery View
-    st.markdown("#### 📉 Official Amortization Schedule (`view_mortgage_full_schedule`)")
-    st.caption(
-        f"Source View: `{config.MORTGAGE_SCHEDULE_VIEW_ID}` — Combines your saved `dim_mortgage_terms` with actual "
-        "`House Mortgage` and `House Mortgage Overpayment` bank transactions."
+    # 3. Official Amortization Schedule
+    st.markdown(
+        "#### 📉 Official Amortization Schedule",
+        help="View: `liabilities.view_mortgage_full_schedule` (combines `dim_mortgage_terms` with actual `House Mortgage` bank transactions).",
     )
     if not schedule_df.empty:
         ui.render_mortgage_schedule(schedule_df)
@@ -137,14 +129,13 @@ with tab_official:
 # TAB 2: WHAT-IF SIMULATOR (READ-ONLY SANDBOX)
 # =====================================================================
 with tab_sandbox:
-    top_col1, top_col2 = st.columns([4, 1])
-    with top_col1:
-        st.info(
-            "🧪 **Sandbox Mode (Read-Only)** — Experiment freely with hypothetical interest rates, recurring monthly "
-            "overpayments, or one-off lump sums. **Nothing in this tab is saved to BigQuery.**"
-        )
+    _, top_col2 = st.columns([4, 1])
     with top_col2:
-        if st.button("🔄 Reset to Official Terms", use_container_width=True):
+        if st.button(
+            "🔄 Reset to Official Terms",
+            use_container_width=True,
+            help="Read-only sandbox: changes in this tab are never saved to the database.",
+        ):
             for k in [
                 "sim_input_balance",
                 "sim_input_rate",
@@ -161,9 +152,9 @@ with tab_sandbox:
         include_extra_payment=True,
     )
 
-    st.markdown("##### 🧪 Hypothetical Events (Sandbox Only)")
-    st.caption(
-        "Pre-loaded with your official events as a starting point. Add, edit, or remove rows to test scenarios."
+    st.markdown(
+        "##### 🧪 Hypothetical Events (Sandbox Only)",
+        help="Pre-loaded with your official events. Add, edit, or remove rows to test scenarios without modifying your saved mortgage.",
     )
     sim_events_df = st.data_editor(
         saved_events_df.copy() if not saved_events_df.empty else pd.DataFrame(columns=["date", "event_type", "value"]),
