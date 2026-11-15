@@ -55,29 +55,49 @@ def get_client():
     return get_bq_client()
 
 
-def _write_sync_status(status: str, reason: str, error: str = None, size_bytes: int = None):
+def _write_sync_status(status: str, reason: str, error: str = None, size_bytes: int = None, env: str = None):
     os.makedirs(config.DATA_DIR, exist_ok=True)
-    payload = {
+    target_env = (env or config.ENV or "prod").lower()
+    entry = {
         "status": status,
         "last_backup_utc": datetime.datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
         "reason": reason,
         "bucket": config.GCS_BACKUP_BUCKET,
+        "env": target_env,
         "error": error,
         "size_bytes": size_bytes,
     }
     try:
+        existing = {}
+        if os.path.exists(config.CLOUD_SYNC_STATUS_PATH):
+            try:
+                with open(config.CLOUD_SYNC_STATUS_PATH, "r", encoding="utf-8") as f:
+                    existing = json.load(f)
+            except Exception:
+                existing = {}
+        if not isinstance(existing, dict):
+            existing = {}
+        existing[target_env] = entry
+        # Also keep top-level fields for backwards compatibility
+        existing.update(entry)
         with open(config.CLOUD_SYNC_STATUS_PATH, "w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2)
+            json.dump(existing, f, indent=2)
     except Exception:
         pass
 
 
-def get_cloud_sync_status() -> dict:
-    """Returns metadata on the most recent GCS cloud backup."""
+def get_cloud_sync_status(env: str = None) -> dict:
+    """Returns metadata on the most recent GCS/BQ cloud backup for the active environment."""
+    target_env = (env or config.ENV or "prod").lower()
     if os.path.exists(config.CLOUD_SYNC_STATUS_PATH):
         try:
             with open(config.CLOUD_SYNC_STATUS_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+            if isinstance(data, dict):
+                if isinstance(data.get(target_env), dict):
+                    return data[target_env]
+                if data.get("env", "prod") == target_env or "status" in data:
+                    return data
         except Exception:
             pass
     return {}
@@ -96,6 +116,7 @@ ALL_BQ_MIRROR_TABLES = [
 REASON_TO_BQ_TABLES = {
     "insert_transactions": ["bank_transactions.transactions", "reporting.table_net_worth"],
     "update_transactions": ["bank_transactions.transactions", "reporting.table_net_worth"],
+    "rewind_dev_transactions": ["bank_transactions.transactions", "reporting.table_net_worth"],
     "link_reimbursement": ["bank_transactions.transactions"],
     "save_dim_accounts": ["accounts.dim_accounts", "reporting.table_net_worth"],
     "link_open_banking": ["accounts.dim_accounts"],
@@ -111,36 +132,43 @@ REASON_TO_BQ_TABLES = {
 }
 
 
-def _perform_gcs_backup_sync(reason: str = "write") -> tuple[bool, str]:
+def _perform_gcs_backup_sync(reason: str = "write", env: str = None) -> tuple[bool, str]:
     """
-    Creates a consistent file snapshot of `finoob.duckdb`, uploads it to Google Cloud Storage:
-      - gs://<bucket>/duckdb/finoob_latest.duckdb
-      - gs://<bucket>/duckdb/archive/finoob_YYYY-MM-DD.duckdb
-    and mirrors the updated table(s) to Google BigQuery via Parquet so the GCP BigQuery Console
-    always stays in sync with local DuckDB.
+    Creates a consistent file snapshot of the active DuckDB database:
+      - In PROD (`finoob.duckdb`): uploads to `duckdb/finoob_latest.duckdb` + daily `duckdb/archive/finoob_YYYY-MM-DD.duckdb`
+        and mirrors modified tables to `finoob.<schema>.<table>` in BigQuery.
+      - In DEV (`finoob_dev.duckdb`): uploads to `duckdb/finoob_dev_latest.duckdb`
+        and mirrors modified tables to `finoob.dev.<table>` in BigQuery.
     """
-    if not os.path.exists(config.DUCKDB_PROD_PATH):
-        return False, "Production DuckDB file does not exist yet."
+    target_env = (env or config.ENV or "prod").lower()
+    src_db_path = config.DUCKDB_DEV_PATH if target_env == "dev" else config.DUCKDB_PROD_PATH
+
+    if not os.path.exists(src_db_path):
+        return False, f"{target_env.upper()} DuckDB file does not exist yet."
 
     with _BACKUP_LOCK:
-        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".duckdb", prefix="finoob_snap_")
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".duckdb", prefix=f"finoob_{target_env}_snap_")
         os.close(tmp_fd)
         try:
             with _DB_LOCK:
-                shutil.copy2(config.DUCKDB_PROD_PATH, tmp_path)
+                shutil.copy2(src_db_path, tmp_path)
 
             size_bytes = os.path.getsize(tmp_path)
             gcs = get_gcs_client()
             bucket = gcs.bucket(config.GCS_BACKUP_BUCKET)
 
-            latest_blob = bucket.blob("duckdb/finoob_latest.duckdb")
-            latest_blob.upload_from_filename(tmp_path, timeout=60)
+            if target_env == "dev":
+                latest_blob = bucket.blob("duckdb/finoob_dev_latest.duckdb")
+                latest_blob.upload_from_filename(tmp_path, timeout=60)
+            else:
+                latest_blob = bucket.blob("duckdb/finoob_latest.duckdb")
+                latest_blob.upload_from_filename(tmp_path, timeout=60)
 
-            today_str = datetime.datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            archive_blob = bucket.blob(f"duckdb/archive/finoob_{today_str}.duckdb")
-            archive_blob.upload_from_filename(tmp_path, timeout=60)
+                today_str = datetime.datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                archive_blob = bucket.blob(f"duckdb/archive/finoob_{today_str}.duckdb")
+                archive_blob.upload_from_filename(tmp_path, timeout=60)
 
-            # Mirror updated tables to BigQuery so GCP Console queries remain live
+            # Mirror updated tables to BigQuery (finoob.<schema>.<table> in PROD, finoob.dev.<table> in DEV)
             bq_tables = REASON_TO_BQ_TABLES.get(reason, ALL_BQ_MIRROR_TABLES)
             bq = get_bq_client()
             snap_con = duckdb.connect(tmp_path, read_only=True)
@@ -154,9 +182,15 @@ def _perform_gcs_backup_sync(reason: str = "write") -> tuple[bool, str]:
                             source_format=bigquery.SourceFormat.PARQUET,
                             write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
                         )
+                        if target_env == "dev":
+                            short_tbl = tbl.split(".", 1)[1] if "." in tbl else tbl
+                            dest_table_id = f"{config.BQ_PROJECT_ID}.{config.DEV_DATASET_ID}.{short_tbl}"
+                        else:
+                            dest_table_id = f"{config.BQ_PROJECT_ID}.{tbl}"
+
                         with open(pq_path, "rb") as f:
                             bq.load_table_from_file(
-                                f, f"{config.BQ_PROJECT_ID}.{tbl}", job_config=job_cfg
+                                f, dest_table_id, job_config=job_cfg
                             ).result()
                     finally:
                         if os.path.exists(pq_path):
@@ -167,13 +201,19 @@ def _perform_gcs_backup_sync(reason: str = "write") -> tuple[bool, str]:
             finally:
                 snap_con.close()
 
-            _write_sync_status("ok", reason=f"{reason} (GCS + {len(bq_tables)} BQ tbls)", size_bytes=size_bytes)
+            target_label = "BQ dev" if target_env == "dev" else "BQ"
+            _write_sync_status(
+                "ok",
+                reason=f"{reason} (GCS + {len(bq_tables)} {target_label} tbls)",
+                size_bytes=size_bytes,
+                env=target_env,
+            )
             return (
                 True,
-                f"Synced to GCS & mirrored {len(bq_tables)} table(s) to BigQuery ({size_bytes / (1024*1024):.2f} MB)",
+                f"Pushed {target_env.upper()} DB to GCS & mirrored {len(bq_tables)} table(s) to {target_label} ({size_bytes / (1024*1024):.2f} MB)",
             )
         except Exception as e:
-            _write_sync_status("error", reason=reason, error=str(e))
+            _write_sync_status("error", reason=reason, error=str(e), env=target_env)
             return False, str(e)
         finally:
             if os.path.exists(tmp_path):
@@ -183,19 +223,17 @@ def _perform_gcs_backup_sync(reason: str = "write") -> tuple[bool, str]:
                     pass
 
 
-def backup_prod_db_to_gcs(reason: str = "write", background: bool = True) -> tuple[bool, str]:
+def backup_prod_db_to_gcs(reason: str = "write", background: bool = True, env: str = None) -> tuple[bool, str]:
     """
-    Triggers a backup of `finoob.duckdb` to Google Cloud Storage.
-    Skipped automatically when in `dev` mode unless explicitly called with reason='manual_prod'.
+    Triggers a cloud backup of the active DuckDB database (`finoob.duckdb` in PROD, `finoob_dev.duckdb` in DEV)
+    to Google Cloud Storage and mirrors the updated table(s) to BigQuery (`finoob.<schema>.*` in PROD, `finoob.dev.*` in DEV).
     """
-    if config.ENV == "dev" and reason != "manual_prod":
-        return True, "Skipped cloud backup in DEV mode."
-
+    target_env = (env or config.ENV or "prod").lower()
     if background:
-        t = threading.Thread(target=_perform_gcs_backup_sync, args=(reason,), daemon=True)
+        t = threading.Thread(target=_perform_gcs_backup_sync, args=(reason, target_env), daemon=True)
         t.start()
-        return True, "Cloud backup started in background."
-    return _perform_gcs_backup_sync(reason=reason)
+        return True, f"Cloud backup ({target_env.upper()}) started in background."
+    return _perform_gcs_backup_sync(reason=reason, env=target_env)
 
 
 def restore_prod_db_from_gcs(also_reset_dev: bool = True) -> tuple[bool, str]:
@@ -581,12 +619,13 @@ def get_max_transaction_number(table_id: str, account_id: str) -> int:
 
 
 def sync_dev_sandbox_from_prod() -> tuple[bool, str]:
-    """Copies `data/finoob.duckdb` -> `data/finoob_dev.duckdb` in ~2 ms."""
+    """Copies `data/finoob.duckdb` -> `data/finoob_dev.duckdb` in ~2 ms and pushes to DEV cloud targets."""
     _ensure_db_files()
     try:
         with _DB_LOCK:
             shutil.copy2(config.DUCKDB_PROD_PATH, config.DUCKDB_DEV_PATH)
-        return True, "Cloned production DuckDB database into `finoob_dev.duckdb`."
+        backup_prod_db_to_gcs(reason="reset_dev_from_prod", background=True, env="dev")
+        return True, "Cloned production DuckDB database into `finoob_dev.duckdb` (syncing to DEV cloud in background)."
     except Exception as e:
         return False, str(e)
 
@@ -654,9 +693,12 @@ def rewind_dev_sandbox_transactions(count: int = 100) -> int:
             )
             con.unregister("_tmp_del_keys")
             _refresh_mortgage_and_net_worth_in_con(con)
-            return len(to_remove)
+            removed_count = len(to_remove)
         finally:
             con.close()
+
+    backup_prod_db_to_gcs(reason="rewind_dev_transactions", background=True, env="dev")
+    return removed_count
 
 
 def save_mortgage_updates(table_id: str, edited_df: pd.DataFrame) -> tuple[bool, str]:
