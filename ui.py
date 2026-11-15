@@ -246,24 +246,54 @@ def init_page(page_title_suffix=None):
 
         from backend.infrastructure import db_client
         sync_info = db_client.get_cloud_sync_status()
-        with st.expander("☁️ Cloud Sync (GCS + BQ)", expanded=False):
+        with st.expander("☁️ Cloud Backup (→ GCS & BQ)", expanded=False):
+            raw_reason = str(sync_info.get("reason", "auto"))
+            friendly_reasons = {
+                "insert_transactions": "New transactions saved",
+                "update_transactions": "Transactions updated",
+                "link_reimbursement": "Reimbursement linked",
+                "save_dim_accounts": "Accounts updated",
+                "link_open_banking": "Open Banking linked",
+                "save_dim_categories": "Categories/rules updated",
+                "save_dim_loans": "Loans updated",
+                "save_dim_property_assets": "Property assets updated",
+                "save_mortgage_updates": "Mortgage terms updated",
+                "refresh_net_worth": "Net worth refreshed",
+                "save_stocks": "Stocks updated",
+                "save_pension": "Pension updated",
+                "sync_stocks_gsheet": "Stocks synced from GSheet",
+                "sync_pension_gsheet": "Pension synced from GSheet",
+                "manual_prod": "Manual push",
+                "sql_explorer_write": "SQL Explorer write query",
+            }
+            base_key = raw_reason.split(" (")[0]
+            suffix = f" ({raw_reason.split(' (', 1)[1]}" if " (" in raw_reason else ""
+            friendly_trigger = f"{friendly_reasons.get(base_key, base_key)}{suffix}"
+
             if sync_info.get("status") == "ok":
-                st.caption(
-                    f"✅ **Last Synced:** {sync_info.get('last_backup_utc', 'N/A')}\n\n"
-                    f"Trigger: `{sync_info.get('reason', 'auto')}`"
-                )
+                if base_key == "restored_from_gcs":
+                    st.caption(
+                        f"✅ **Initialized from GCS:** {sync_info.get('last_backup_utc', 'N/A')}\n\n"
+                        "Direction: **Local DB → GCS & BigQuery** (pushes automatically on every Production save)."
+                    )
+                else:
+                    st.caption(
+                        f"✅ **Last Pushed to GCS & BQ:** {sync_info.get('last_backup_utc', 'N/A')}\n\n"
+                        f"Direction: `Local DB → Cloud`  •  Event: `{friendly_trigger}`"
+                    )
             elif sync_info.get("status") == "error":
-                st.caption(f"⚠️ **Last Sync Error:** {sync_info.get('error')}")
+                st.caption(f"⚠️ **Last Push Error (Local → Cloud):** {sync_info.get('error')}")
             else:
-                st.caption("Automatic GCS backup & BigQuery mirror runs on every Production save.")
+                st.caption("Pushes local DuckDB changes **to** GCS & BigQuery automatically on every Production save.")
 
             if config.ENV == "dev":
+                st.caption("🔒 *Cloud push is disabled in DEV mode so sandbox edits never overwrite Production backups.*")
                 if st.button(
                     "📥 Pull Prod DB from GCS",
                     use_container_width=True,
-                    help="Downloads `finoob_latest.duckdb` from Google Cloud Storage and resets your local dev sandbox.",
+                    help="Downloads `finoob_latest.duckdb` from Google Cloud Storage into your local dev sandbox.",
                 ):
-                    with st.spinner("Downloading from GCS..."):
+                    with st.spinner("Downloading Production snapshot from GCS..."):
                         ok, msg = db_client.restore_prod_db_from_gcs(also_reset_dev=True)
                         st.cache_data.clear()
                         st.session_state.pop("dashboard_analytics_bundle", None)
@@ -274,11 +304,11 @@ def init_page(page_title_suffix=None):
                         st.error(msg)
             else:
                 if st.button(
-                    "☁️ Sync Now",
+                    "⬆️ Push to GCS & BQ Now",
                     use_container_width=True,
-                    help="Upload `finoob.duckdb` to GCS and mirror all tables to BigQuery now.",
+                    help="Uploads local `finoob.duckdb` to Google Cloud Storage and mirrors all tables to BigQuery now.",
                 ):
-                    with st.spinner("Syncing to GCS & BigQuery..."):
+                    with st.spinner("Pushing local DB to GCS & BigQuery..."):
                         ok, msg = db_client.backup_prod_db_to_gcs(reason="manual_prod", background=False)
                     if ok:
                         st.toast(f"☁️ {msg}", icon="✅")
