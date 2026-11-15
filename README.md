@@ -1,71 +1,113 @@
-# finoob
+# 💸 Finoob
 
-**finoob** is a data pipeline management tool for personal finance. It uses a simple Streamlit interface to ingest, clean, and categorize raw transaction files from multiple banks. The processed data is then loaded into Google BigQuery, creating a single source of truth for your financial history.
+**Finoob** is a full-stack personal finance and net-worth management platform built with **Python**, **Streamlit**, **Google BigQuery**, and **PSD2 Open Banking (Enable Banking API)**.
 
-The primary goal of this application is to prepare and serve clean, structured data to a BI platform like **Looker Studio**, enabling powerful and customized financial visualizations and dashboards.
+It combines automated multi-bank transaction ingestion, rule-based categorization, reimbursement linking, asset/liability modeling, and an interactive analytics dashboard—backed by a single source of truth in BigQuery.
 
 ---
 
 ## ✨ Key Features
 
-*   **Multi-Bank Transaction Importing**: Parse and import transaction files (CSV, Excel) from various banks (e.g., Revolut, PTSB, CMB, USbank) using a flexible strategy pattern.
-*   **Intelligent Duplicate Prevention**: Automatically ingests only new transactions from an uploaded file, preventing duplicate entries in your database.
-*   **Bulk Categorization**: Efficiently categorize historical transactions in a user-friendly data editor.
-*   **Advanced Reimbursement Tracking**: Link incoming credits (like a friend paying you back) to specific outgoing expenses to accurately track the net cost of purchases.
-*   **Rule-Based Categorization**: Manage spending categories and associated keywords to streamline future transaction classification.
-*   **Net Worth Dashboard**: View a consolidated overview of all your account balances and your total net worth, which can be refreshed on demand.
+* **📊 Interactive Analytics Dashboard (`pages/dashboard.py`)**
+  * **5 Analytics Views**: *Overview*, *Cash Flow*, *Spending & Budgets*, *Net Worth & Allocation*, and *Yearly Review*.
+  * **Rich Visualizations**: Monthly cash flow & savings rate trends, 3-bucket spending breakdown (*Essential*, *Discretionary*, *Capital Outflow*), category heatmaps, stacked net-worth history across liquid and illiquid assets, and year-over-year comparisons.
+* **🔄 Open Banking Multi-Account Sync (`pages/import_sync.py`)**
+  * **1-Click PSD2 API Sync**: Connects directly to supported banks via the Enable Banking API using RS256 JWT authentication.
+  * **Automatic OAuth Redirect Handling**: Captures `/?code=...` bank authorization callbacks directly in the browser to establish sessions.
+  * **4-Point Pre-Save Safety Net**: Automatically verifies starting balance continuity, internal batch math, live bank balance reconciliation, and deduplication markers before committing transactions to BigQuery.
+  * **Manual File Upload Fallback**: Pluggable strategy parsers for CSV and Excel bank statements.
+* **🏷️ Rules, Triage & Reimbursements (`pages/rules_and_backfill.py`)**
+  * **Ordered Categorization Rules**: Match transaction descriptions by keyword and optional min/max amount ranges, mapped to spend buckets.
+  * **Historical Backfill Simulator**: Preview and apply new categorization rules across historical transactions in bulk.
+  * **Bi-Directional Reimbursement Linking**: Link incoming peer-to-peer credits to outgoing expenses to track true net spending while preserving original audit trails (`original_debit` + nested `reimbursement` struct).
+* **🏠 Assets, Loans & Liabilities (`pages/assets_and_loans.py`, `pages/liabilities.py`)**
+  * **Stock Grants & Vesting**: Tracks RSU vesting schedules against live market prices and EUR/USD exchange rates (`yfinance`).
+  * **Property, Pension & Loan Receivables**: Tracks real estate valuations, monthly pension unit growth, and amortized personal loan repayments.
+  * **Daily-Interest Mortgage Simulator**: Combines actual historical mortgage payments from bank transactions with planned future lump sums, rate changes, and overpayments via a BigQuery JS UDF (`liabilities.calculate_amortization`).
+* **🧪 Zero-Copy Dev Sandbox**
+  * Switch between **PROD** and **DEV** (`finoob.dev.*` zero-copy BigQuery table clones) at runtime from the sidebar—or reset the dev sandbox from production in one click.
 
-## 🛠️ Tech Stack
+---
 
-*   **Frontend**: [Streamlit](https://streamlit.io/)
-*   **Backend**: Python
-*   **Data Warehouse**: [Google BigQuery](https://cloud.google.com/bigquery)
-*   **Core Libraries**: [Pandas](https://pandas.pydata.org/)
+## 📁 Project Structure
+
+```text
+finoob/
+├── app.py                              # Entrypoint, navigation router & environment switcher
+├── config.py                           # Environment binding (prod vs. dev) & BigQuery table IDs
+├── ui.py                               # Shared UI components, formatting & custom styling
+├── requirements.txt                    # Python dependencies
+├── pages/                              # Streamlit application pages
+│   ├── dashboard.py                    # 📊 5-tab Analytics & Net Worth Dashboard
+│   ├── import_sync.py                  # 📥 Open Banking API Sync & CSV/Excel Upload
+│   ├── rules_and_backfill.py           # 🏷️ Rule Manager, Manual Triage, Backfill & Reimbursements
+│   ├── accounts.py                     # 🏦 Account Management & 3-Way Balance Health Audit
+│   ├── assets_and_loans.py             # 🏠 Stocks, Property Valuations & Loan Receivables
+│   └── liabilities.py                  # 📉 Mortgage Terms, Simulator & Amortization Schedule
+├── backend/                            # Layered backend architecture
+│   ├── domain/                         # Pure business logic & validation (no I/O)
+│   │   ├── account_logic.py
+│   │   ├── assets_logic.py
+│   │   ├── categorization_logic.py
+│   │   ├── dashboard_logic.py
+│   │   ├── mortgage_logic.py
+│   │   ├── reimbursement_logic.py
+│   │   ├── stocks_logic.py
+│   │   └── transaction_logic.py
+│   ├── services/                       # Application workflows orchestrating domain + infrastructure
+│   │   ├── accounts_service.py
+│   │   ├── app_service.py
+│   │   ├── assets_service.py
+│   │   ├── categorization_service.py
+│   │   ├── dashboard_service.py
+│   │   ├── ingestion_service.py
+│   │   ├── market_data_service.py
+│   │   ├── mortgage_service.py
+│   │   ├── reimbursement_service.py
+│   │   ├── rules_service.py
+│   │   └── stocks_service.py
+│   └── infrastructure/                 # External I/O adapters
+│       ├── db_client.py                # BigQuery client (with Google Drive scopes)
+│       ├── enable_banking_client.py    # Enable Banking PSD2 API client (RS256 JWT)
+│       ├── parsers.py                  # Bank-specific CSV/Excel normalization strategies
+│       └── queries.py                  # Parameterized SQL queries
+├── sql/                                # Version-controlled BigQuery DDL (sanitized)
+│   ├── tables/                         # 9 base & external table schemas
+│   ├── routines/                       # 3 stored procedures & UDFs
+│   └── views/                          # 7 reporting, asset & liability views
+└── scripts/                            # Operational & developer CLI tools
+    ├── bq_schema_sync.py               # 2-way BigQuery <-> Git DDL sync & syntax validator
+    └── pre-push.sh                     # Git pre-push hook verifying BigQuery DDL sync
+```
 
 ---
 
 ## 🚀 Getting Started
 
-Follow these steps to set up and run the application locally.
-
 ### 1. Prerequisites
+* **Python 3.11+**
+* **Google Cloud Platform (GCP)** project with BigQuery and Google Drive APIs enabled.
+* *(Optional)* **Enable Banking** developer application (App ID + RSA private key) for live PSD2 Open Banking sync.
 
-*   Python 3.8+
-*   A Google Cloud Platform (GCP) account with the BigQuery API enabled.
-*   A GCP Service Account with BigQuery User & BigQuery Data Editor roles.
-
-### 2. Clone the Repository
+### 2. Installation
 
 ```bash
-git clone https://github.com/hyoob/finoob.git
+git clone git@github.com:hyoob/finoob.git
 cd finoob
-```
 
-### 3. Install Dependencies
-
-It's recommended to use a virtual environment.
-
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 4. Configure Credentials
+### 3. Configure `.streamlit/secrets.toml`
 
-Create a secrets file for Streamlit to connect to Google Cloud.
-
-1.  Create a directory named `.streamlit` in the root of the project.
-2.  Inside `.streamlit`, create a file named `secrets.toml`.
-3.  Download the JSON key for your GCP Service Account.
-4.  Populate `secrets.toml` with the following structure, pasting your service account key details and project information.
+Create `.streamlit/secrets.toml` (gitignored) with your GCP service account, Enable Banking credentials, and BigQuery template variables:
 
 ```toml
-# .streamlit/secrets.toml
+# Default environment ("dev" or "prod"; can also be overridden via FINOOB_ENV)
+environment = "dev"
 
-environment = "dev" # Use "dev" for local development, "prod" for deployment
-
-# Paste the contents of your GCP service account JSON key here
 [gcp_service_account]
 type = "service_account"
 project_id = "your-gcp-project-id"
@@ -78,65 +120,60 @@ token_uri = "https://oauth2.googleapis.com/token"
 auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
 client_x509_cert_url = "..."
 
-# Your BigQuery table IDs for dev and prod environments
-[bigquery_table]
-dev = "your-gcp-project-id.your_dataset.transactions_dev"
-prod = "your-gcp-project-id.your_dataset.transactions_prod"
+[enable_banking]
+app_id = "your-enable-banking-app-id"
+redirect_url = "https://localhost:8501/"
+private_key = """-----BEGIN PRIVATE KEY-----
+...
+-----END PRIVATE KEY-----"""
+
+[bigquery]
+gcs_backup_bucket = "your-gcs-backup-bucket"
+pension_gsheet_uri = "https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit#gid=..."
+stocks_gsheet_uri = "https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit#gid=0"
 ```
 
-### 5. Configure Application Data
-
-On the first run, the application will automatically create `accounts.json` and `categories.json` inside the `config_data/` directory from the `_example.json` templates.
-
-1.  Run the app once to generate the files.
-2.  Stop the app.
-3.  Edit `config_data/accounts.json` to add your bank accounts. The `account_id` must be unique. The `bank` key must match one of the keys in the `PARSER_REGISTRY` in `backend/infrastructure/parsers.py` (e.g., "revolut", "ptsb").
-4.  (Optional) Edit `config_data/categories.json` to pre-populate your spending categories. You can also manage this from within the app.
-
-### 6. BigQuery Setup
-
-You need to create the dataset and table in BigQuery that you referenced in `secrets.toml`.
-
-*   **Dataset**: Create a dataset (e.g., `finoob_data`).
-*   **Table**: Create a table (e.g., `transactions_dev`) with a schema that matches the application's requirements. 
-
-TODO: Add details on BQ tables & schemas.
-
-### 7. Run the Application
-
-Navigate to the project's root directory and run the following command:
+### 4. Run Locally
 
 ```bash
-streamlit run app.py
+.venv/bin/streamlit run app.py
 ```
-
-Your application will open in a new browser tab.
 
 ---
 
-## 📁 Project Structure
+## 🗄️ BigQuery Schema & Routine Management (`sql/` & `scripts/`)
 
-The project is organized to separate concerns between the user interface and backend logic.
+All **19 BigQuery database objects** (tables, stored procedures, JS UDFs, and views) are tracked in [`sql/`](sql/) using idempotent DDL (`CREATE TABLE IF NOT EXISTS`, `CREATE OR REPLACE VIEW/PROCEDURE/FUNCTION`).
 
+To ensure zero private URLs or cloud identifiers are exposed in Git, private values are parameterized in `sql/*.sql` (`${PROJECT_ID}`, `${GCS_BACKUP_BUCKET}`, `${PENSION_GSHEET_URI}`, `${STOCKS_GSHEET_URI}`) and resolved from `.streamlit/secrets.toml` at runtime by [`scripts/bq_schema_sync.py`](scripts/bq_schema_sync.py).
+
+### CLI Usage (`scripts/bq_schema_sync.py`)
+
+```bash
+# 1. Check if live BigQuery matches local sql/ files (exits 0 if in sync, 1 if drifted)
+.venv/bin/python scripts/bq_schema_sync.py status
+
+# 2. Pull live DDL from BigQuery into sql/ (auto-sanitizes project ID & private URLs)
+#    Use this after editing a view or procedure in the BigQuery Web Console:
+.venv/bin/python scripts/bq_schema_sync.py pull
+
+# 3. Validate syntax of all local sql/ files using BigQuery's dry-run parser:
+.venv/bin/python scripts/bq_schema_sync.py push --dry-run
+
+# 4. Deploy local sql/ changes to BigQuery (all objects, or a single target):
+.venv/bin/python scripts/bq_schema_sync.py push --target reporting.view_net_worth
+.venv/bin/python scripts/bq_schema_sync.py push
 ```
-finoob/
-├── .streamlit/
-│   └── secrets.toml            # Credentials
-├── app.py                      # Main Entry Point (Dashboard / High-level Summary)
-├── ui.py                       # Shared UI components & Helper functions
-├── config.py                   # App configuration & Path constants
-├── requirements.txt            # Python dependencies
-├── pages/                      # All sub-pages (Sorted by number)
-│   ├── 1_📥_Import.py          # <--- MOVED here
-│   ├── 2_🏷️_Categorize.py
-│   ├── 3_💰_Reimbursements.py
-│   ├── 4_📂_Manage_Categories.py
-│   └── 5_🏦_Accounts.py
-├── backend/                    # Business Logic Layer
-│   ├── domain/                 # Rules (categorization_logic.py)
-│   ├── infrastructure/         # IO (local_storage.py, db_client.py)
-│   └── services/               # Workflows (ingestion_service.py, rules_service.py)
-└── config_data/                # Data persistence (Gitignored usually)
-    ├── accounts.json
-    └── categories.json
+
+### Automatic Git `pre-push` Hook (`scripts/pre-push.sh`)
+
+To prevent changes made in the BigQuery Web Console from being forgotten, install the Git `pre-push` hook once per clone:
+
+```bash
+ln -sf ../../scripts/pre-push.sh .git/hooks/pre-push
+chmod +x scripts/pre-push.sh
 ```
+
+* Before every `git push`, Git runs `bq_schema_sync.py status`.
+* If a view or stored procedure was modified in BigQuery and hasn't been pulled into `sql/`, the push pauses and prompts you to run `.venv/bin/python scripts/bq_schema_sync.py pull` first (or bypass with `git push --no-verify`).
+

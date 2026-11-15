@@ -191,8 +191,10 @@ def cmd_status(client, project_id, placeholders):
 
     if diffs == 0:
         print("\nAll local sql/ files match live BigQuery schemas 100%.")
+        return 0
     else:
-        print(f"\nFound {diffs} difference(s).")
+        print(f"\nFound {diffs} difference(s). Run 'python scripts/bq_schema_sync.py pull' to sync from BigQuery.")
+        return 1
 
 
 def cmd_push(client, placeholders, dry_run=False, target=None):
@@ -243,7 +245,7 @@ def main():
     if args.action == "pull":
         cmd_pull(client, project_id, placeholders)
     elif args.action == "status":
-        cmd_status(client, project_id, placeholders)
+        sys.exit(cmd_status(client, project_id, placeholders))
     elif args.action == "push":
         cmd_push(client, placeholders, dry_run=args.dry_run, target=args.target)
 
