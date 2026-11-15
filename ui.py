@@ -257,24 +257,31 @@ def init_page(page_title_suffix=None):
             else:
                 st.caption("Automatic GCS backup & BigQuery mirror runs on every Production save.")
 
-            b_col1, b_col2 = st.columns(2)
-            with b_col1:
-                if st.button("☁️ Sync", use_container_width=True, help="Upload `finoob.duckdb` to GCS and mirror all tables to BigQuery now."):
-                    with st.spinner("Syncing to GCS & BigQuery..."):
-                        ok, msg = db_client.backup_prod_db_to_gcs(reason="manual_prod", background=False)
-                    if ok:
-                        st.toast(f"☁️ {msg}", icon="✅")
-                        st.rerun()
-                    else:
-                        st.error(msg)
-            with b_col2:
-                if st.button("📥 Pull", use_container_width=True, help="Download latest `finoob_latest.duckdb` from Google Cloud Storage."):
+            if config.ENV == "dev":
+                if st.button(
+                    "📥 Pull Prod DB from GCS",
+                    use_container_width=True,
+                    help="Downloads `finoob_latest.duckdb` from Google Cloud Storage and resets your local dev sandbox.",
+                ):
                     with st.spinner("Downloading from GCS..."):
                         ok, msg = db_client.restore_prod_db_from_gcs(also_reset_dev=True)
                         st.cache_data.clear()
                         st.session_state.pop("dashboard_analytics_bundle", None)
                     if ok:
                         st.toast(f"📥 {msg}", icon="✅")
+                        st.rerun()
+                    else:
+                        st.error(msg)
+            else:
+                if st.button(
+                    "☁️ Sync Now",
+                    use_container_width=True,
+                    help="Upload `finoob.duckdb` to GCS and mirror all tables to BigQuery now.",
+                ):
+                    with st.spinner("Syncing to GCS & BigQuery..."):
+                        ok, msg = db_client.backup_prod_db_to_gcs(reason="manual_prod", background=False)
+                    if ok:
+                        st.toast(f"☁️ {msg}", icon="✅")
                         st.rerun()
                     else:
                         st.error(msg)
