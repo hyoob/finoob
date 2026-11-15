@@ -55,15 +55,8 @@ def load_dashboard_analytics_bundle(
     mortgage_schedule_view_id,
 ):
     """
-    Fetches all datasets required across the 5 Dashboard pillars in parallel using the shared
-    thread-safe BigQuery client.
+    Fetches all datasets required across the 5 Dashboard pillars from local DuckDB.
     """
-    client = db_client.get_client()
-
-    def _q(sql):
-        job = client.query(sql)
-        return [dict(r) for r in job.result()]
-
     q_map = {
         "monthly": queries.get_monthly_finance_query(monthly_view_id),
         "yearly": queries.get_yearly_finance_query(yearly_view_id),
@@ -76,15 +69,7 @@ def load_dashboard_analytics_bundle(
         "mortgage_schedule": queries.get_mortgage_schedule_query(mortgage_schedule_view_id),
     }
 
-    results = {}
-    with ThreadPoolExecutor(max_workers=9) as pool:
-        future_map = {k: pool.submit(_q, sql) for k, sql in q_map.items()}
-        for k, fut in future_map.items():
-            try:
-                results[k] = fut.result()
-            except Exception as e:
-                print(f"[Dashboard Service] Query '{k}' failed: {e}")
-                results[k] = []
+    results = db_client.run_queries_batch(q_map)
 
     bucket_map = {
         str(r.get("category")): str(r.get("spend_bucket"))

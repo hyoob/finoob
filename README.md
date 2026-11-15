@@ -1,8 +1,8 @@
 # 💸 Finoob
 
-**Finoob** is a full-stack personal finance and net-worth management platform built with **Python**, **Streamlit**, **Google BigQuery**, and **PSD2 Open Banking (Enable Banking API)**.
+**Finoob** is a full-stack personal finance and net-worth management platform built with **Python**, **Streamlit**, **DuckDB** (with automatic **Google Cloud Storage** backup), and **PSD2 Open Banking (Enable Banking API)**.
 
-It combines automated multi-bank transaction ingestion, rule-based categorization, reimbursement linking, asset/liability modeling, and an interactive analytics dashboard—backed by a single source of truth in BigQuery.
+It combines automated multi-bank transaction ingestion, rule-based categorization, reimbursement linking, asset/liability modeling, and an interactive analytics dashboard—with local millisecond query speed and cloud-grade durability.
 
 ---
 
@@ -24,8 +24,9 @@ It combines automated multi-bank transaction ingestion, rule-based categorizatio
   * **Stock Grants & Vesting**: Tracks RSU vesting schedules against live market prices and EUR/USD exchange rates (`yfinance`).
   * **Property, Pension & Loan Receivables**: Tracks real estate valuations, monthly pension unit growth, and amortized personal loan repayments.
   * **Daily-Interest Mortgage Simulator**: Combines actual historical mortgage payments from bank transactions with planned future lump sums, rate changes, and overpayments via a BigQuery JS UDF (`liabilities.calculate_amortization`).
-* **🧪 Zero-Copy Dev Sandbox**
-  * Switch between **PROD** and **DEV** (`finoob.dev.*` zero-copy BigQuery table clones) at runtime from the sidebar—or reset the dev sandbox from production in one click.
+* **🧪 Instant Dev Sandbox & Cloud Backup**
+  * Switch between **PROD** (`data/finoob.duckdb`) and **DEV** (`data/finoob_dev.duckdb`) at runtime from the sidebar—or reset the dev sandbox from production in ~5 ms.
+  * Every production save automatically backs up `finoob.duckdb` in the background to **Google Cloud Storage** (`duckdb/finoob_latest.duckdb` + daily dated archives `duckdb/archive/finoob_YYYY-MM-DD.duckdb`).
 
 ---
 
@@ -67,17 +68,18 @@ finoob/
 │   │   ├── rules_service.py
 │   │   └── stocks_service.py
 │   └── infrastructure/                 # External I/O adapters
-│       ├── db_client.py                # BigQuery client (with Google Drive scopes)
+│       ├── db_client.py                # Local DuckDB engine + automatic GCS cloud backup
 │       ├── enable_banking_client.py    # Enable Banking PSD2 API client (RS256 JWT)
 │       ├── parsers.py                  # Bank-specific CSV/Excel normalization strategies
 │       └── queries.py                  # Parameterized SQL queries
-├── sql/                                # Version-controlled BigQuery DDL (sanitized)
+├── sql/                                # Version-controlled SQL DDL (tables, routines & views)
 │   ├── tables/                         # 9 base & external table schemas
 │   ├── routines/                       # 3 stored procedures & UDFs
 │   └── views/                          # 7 reporting, asset & liability views
 └── scripts/                            # Operational & developer CLI tools
+    ├── migrate_bq_to_duckdb.py         # BigQuery -> local DuckDB migration & view initializer
     ├── bq_schema_sync.py               # 2-way BigQuery <-> Git DDL sync & syntax validator
-    └── pre-push.sh                     # Git pre-push hook verifying BigQuery DDL sync
+    └── pre-push.sh                     # Git pre-push hook verifying SQL DDL sync
 ```
 
 ---

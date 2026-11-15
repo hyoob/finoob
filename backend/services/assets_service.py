@@ -93,9 +93,25 @@ def save_dim_property_assets(table_id, edited_prop_df):
 
 @st.cache_data(ttl=120, show_spinner=False)
 def get_pension_overview_data(monthly_view_id, raw_table_id):
-    """Fetches read-only pension monthly balances and raw contribution rows."""
+    """Fetches pension monthly balances and raw contribution rows from DuckDB."""
     monthly_rows = db_client.run_query(queries.get_pension_monthly_query(monthly_view_id))
     raw_rows = db_client.run_query(queries.get_pension_raw_query(raw_table_id))
     monthly_df = pd.DataFrame(monthly_rows) if monthly_rows else pd.DataFrame()
     raw_df = pd.DataFrame(raw_rows) if raw_rows else pd.DataFrame()
     return monthly_df, raw_df
+
+
+def save_pension_raw_data(edited_df: pd.DataFrame) -> tuple[bool, str]:
+    """Saves edited raw pension rows to DuckDB, refreshes Net Worth, and triggers cloud backup."""
+    ok, msg = db_client.save_pension_table(edited_df)
+    if ok:
+        st.cache_data.clear()
+    return ok, msg
+
+
+def sync_pension_from_google_sheet() -> tuple[bool, str]:
+    """Pulls latest Pension rows from Google Sheets into DuckDB, refreshes Net Worth, and backs up to GCS."""
+    ok, msg = db_client.sync_pension_from_gsheet()
+    if ok:
+        st.cache_data.clear()
+    return ok, msg

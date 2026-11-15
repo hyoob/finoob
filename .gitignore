@@ -19,3 +19,8 @@ config_data/categories_dev.json
 config_data/accounts.json
 config_data/accounts_dev.json
 *.pem
+
+# Local DuckDB database & cloud sync metadata
+data/
+*.duckdb
+*.duckdb.wal

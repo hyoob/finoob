@@ -19,8 +19,7 @@ if "_assets_modules_reloaded_v1" not in st.session_state:
 ui.init_page("Assets & Investments")
 st.title("📈 Assets & Investments")
 st.caption(
-    "Manage native BigQuery asset & receivable dimension tables (`dim_loans` and `dim_property_assets`) "
-    "and inspect read-only Stocks & Pension records."
+    "Manage native DuckDB asset & receivable tables (`dim_loans`, `dim_property_assets`, `stocks`, and `raw_pension_gsheet`)."
 )
 
 if st.session_state.get("assets_save_banner"):
@@ -29,8 +28,8 @@ if st.session_state.get("assets_save_banner"):
 tab_loans, tab_property, tab_stocks, tab_pension = st.tabs([
     "🤝 Loans & Receivables",
     "🏡 Property Valuations",
-    "📈 Stocks & Vesting (Read-Only)",
-    "🧓 Pension (Read-Only)",
+    "📈 Stocks & Vesting",
+    "🧓 Pension",
 ])
 
 # =====================================================================
@@ -257,12 +256,24 @@ with tab_property:
 
 
 # =====================================================================
-# TAB 3: STOCKS & VESTING (READ-ONLY GOOGLE SHEET EXTERNAL TABLE)
+# TAB 3: STOCKS & VESTING (NATIVE DUCKDB TABLE + OPTIONAL GSHEET SYNC)
 # =====================================================================
 with tab_stocks:
-    st.caption(
-        f"Source External Table: `{config.STOCKS_TABLE_ID}` (backed by Google Sheets) • Live Ticker: `{config.STOCK_TICKER}`"
-    )
+    hdr_col1, hdr_col2 = st.columns([3, 1])
+    with hdr_col1:
+        st.caption(
+            f"DuckDB Table: `assets.stocks` • Live Ticker: `{config.STOCK_TICKER}`"
+        )
+    with hdr_col2:
+        if st.button("🔄 Sync from Google Sheet", use_container_width=True, key="sync_stocks_gsheet_btn"):
+            with st.spinner("Pulling latest Stocks rows from Google Sheets into DuckDB..."):
+                ok, msg = stocks_service.sync_stocks_from_google_sheet()
+            if ok:
+                st.session_state.assets_save_banner = f"🎉 {msg}"
+                st.rerun()
+            else:
+                st.error(f"🚨 {msg}")
+
     stocks_df = None
     try:
         stocks_df = stocks_service.get_stocks_data(config.STOCKS_TABLE_ID)
@@ -287,18 +298,52 @@ with tab_stocks:
         st.divider()
         ui.render_stock_visualizations(stocks_df)
 
+        st.divider()
+        with st.expander("✏️ Edit Stocks & Vesting Schedule (`assets.stocks`)", expanded=False):
+            edit_stocks_df = stocks_df.copy()
+            if "Date" in edit_stocks_df.columns:
+                edit_stocks_df["Date"] = pd.to_datetime(edit_stocks_df["Date"], errors="coerce").dt.date
+            edited_stocks_df = st.data_editor(
+                edit_stocks_df,
+                num_rows="dynamic",
+                use_container_width=True,
+                hide_index=True,
+                key="stocks_table_editor",
+            )
+            if st.button("💾 Save Stocks Table & Refresh Net Worth", type="primary", key="save_stocks_btn"):
+                with st.spinner("Saving `assets.stocks` to DuckDB and refreshing Net Worth..."):
+                    ok, msg = stocks_service.save_stocks_data(edited_stocks_df)
+                if ok:
+                    st.session_state.assets_save_banner = f"🎉 {msg}"
+                    st.rerun()
+                else:
+                    st.error(f"🚨 {msg}")
+
 
 # =====================================================================
-# TAB 4: PENSION OVERVIEW (READ-ONLY GOOGLE SHEET EXTERNAL TABLE)
+# TAB 4: PENSION OVERVIEW (NATIVE DUCKDB TABLE + OPTIONAL GSHEET SYNC)
 # =====================================================================
 with tab_pension:
+    p_hdr1, p_hdr2 = st.columns([3, 1])
+    with p_hdr1:
+        st.caption("DuckDB View: `assets.view_pension_monthly` (computed from `assets.raw_pension_gsheet`).")
+    with p_hdr2:
+        if st.button("🔄 Sync from Google Sheet", use_container_width=True, key="sync_pension_gsheet_btn"):
+            with st.spinner("Pulling latest Pension rows from Google Sheets into DuckDB..."):
+                ok, msg = assets_service.sync_pension_from_google_sheet()
+            if ok:
+                st.session_state.assets_save_banner = f"🎉 {msg}"
+                st.rerun()
+            else:
+                st.error(f"🚨 {msg}")
+
     try:
         pension_monthly_df, pension_raw_df = assets_service.get_pension_overview_data(
             config.PENSION_MONTHLY_VIEW_ID,
             config.PENSION_RAW_TABLE_ID,
         )
     except Exception as e:
-        st.error(f"Error loading pension data from BigQuery: {e}")
+        st.error(f"Error loading pension data: {e}")
         st.stop()
 
     pen_kpis = assets_logic.calculate_pension_summary(pension_monthly_df, pension_raw_df)
@@ -328,9 +373,6 @@ with tab_pension:
 
     st.divider()
     st.markdown("#### 📅 Monthly Pension Balance & Contributions (`view_pension_monthly`)")
-    st.caption(
-        f"Source View: `{config.PENSION_MONTHLY_VIEW_ID}` (backed by Google Sheets external table `{config.PENSION_RAW_TABLE_ID}`)."
-    )
     if pension_monthly_df.empty:
         st.info("No pension monthly data available.")
     else:
@@ -348,8 +390,22 @@ with tab_pension:
             },
         )
 
-    with st.expander("🔍 Inspect Raw Pension Contributions (`raw_pension_gsheet`)", expanded=False):
+    with st.expander("✏️ Edit Raw Pension Contributions (`assets.raw_pension_gsheet`)", expanded=False):
         if pension_raw_df.empty:
             st.info("No raw pension rows found.")
         else:
-            st.dataframe(pension_raw_df, use_container_width=True, hide_index=True)
+            edited_pension_df = st.data_editor(
+                pension_raw_df,
+                num_rows="dynamic",
+                use_container_width=True,
+                hide_index=True,
+                key="pension_raw_editor",
+            )
+            if st.button("💾 Save Pension Contributions & Refresh Net Worth", type="primary", key="save_pension_btn"):
+                with st.spinner("Saving `assets.raw_pension_gsheet` to DuckDB and refreshing Net Worth..."):
+                    ok, msg = assets_service.save_pension_raw_data(edited_pension_df)
+                if ok:
+                    st.session_state.assets_save_banner = f"🎉 {msg}"
+                    st.rerun()
+                else:
+                    st.error(f"🚨 {msg}")

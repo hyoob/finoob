@@ -22,3 +22,21 @@ def get_stocks_data(table_id):
         df.dropna(subset=['Date', 'Total_Vested_after_tax'], inplace=True)
             
     return df
+
+
+def save_stocks_data(edited_df: pd.DataFrame) -> tuple[bool, str]:
+    """Saves edited Stocks DataFrame to DuckDB, refreshes Net Worth, and triggers cloud backup."""
+    import streamlit as st
+    ok, msg = db_client.save_stocks_table(edited_df)
+    if ok:
+        st.cache_data.clear()
+    return ok, msg
+
+
+def sync_stocks_from_google_sheet() -> tuple[bool, str]:
+    """Pulls latest Stocks table from Google Sheets into DuckDB, refreshes Net Worth, and backs up to GCS."""
+    import streamlit as st
+    ok, msg = db_client.sync_stocks_from_gsheet()
+    if ok:
+        st.cache_data.clear()
+    return ok, msg

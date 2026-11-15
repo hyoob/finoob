@@ -411,28 +411,15 @@ def save_multi_account_transactions_workflow(table_id, combined_edited_df, stage
 
 def reset_dev_sandbox_from_prod():
     """
-    Clones all 6 mutable production BigQuery tables into the `finoob.dev` dataset
-    (`transactions`, `dim_accounts`, `dim_categories`, `dim_loans`, `dim_property_assets`, `dim_mortgage_terms`).
+    Copies `data/finoob.duckdb` into `data/finoob_dev.duckdb`.
     Only permitted when config.ENV == 'dev'.
     """
     if config.ENV != "dev":
         raise RuntimeError("reset_dev_sandbox_from_prod can only be run in DEV mode.")
 
-    client = db_client.get_client()
-    clone_pairs = [
-        (config.TRANSACTIONS_PROD_TABLE_ID, config.TRANSACTIONS_DEV_TABLE_ID),
-        (config.ACCOUNTS_PROD_TABLE_ID, config.ACCOUNTS_DEV_TABLE_ID),
-        (config.CATEGORIES_PROD_TABLE_ID, config.CATEGORIES_DEV_TABLE_ID),
-        (config.LOANS_PROD_TABLE_ID, config.LOANS_DEV_TABLE_ID),
-        (config.PROPERTY_ASSETS_PROD_TABLE_ID, config.PROPERTY_ASSETS_DEV_TABLE_ID),
-        (config.MORTGAGE_PROD_TABLE_ID, config.MORTGAGE_DEV_TABLE_ID),
-    ]
-
-    for src, dst in clone_pairs:
-        try:
-            client.query(f"CREATE OR REPLACE TABLE `{dst}` CLONE `{src}`").result()
-        except Exception:
-            client.query(f"CREATE OR REPLACE TABLE `{dst}` AS SELECT * FROM `{src}`").result()
+    ok, msg = db_client.sync_dev_sandbox_from_prod()
+    if not ok:
+        raise RuntimeError(msg)
 
     accounts_service._fetch_accounts_with_balances_cached.clear()
     rules_service.clear_categories_cache()
@@ -442,52 +429,11 @@ def reset_dev_sandbox_from_prod():
 def rewind_dev_sandbox_transactions(count=100):
     """
     Removes the most recent `count` transactions (by date DESC, transaction_number DESC)
-    from `finoob.dev.transactions` and unlinks any expenses whose reimbursements were
+    from `data/finoob_dev.duckdb` and unlinks any expenses whose reimbursements were
     among the removed rows.
     Only permitted when config.ENV == 'dev'.
     """
-    if config.ENV != "dev":
-        raise RuntimeError("rewind_dev_sandbox_transactions can only be run in DEV mode.")
-
-    dev_tbl = config.TRANSACTIONS_DEV_TABLE_ID
-    client = db_client.get_client()
-    n = int(count)
-
-    # 1. If any of the last `n` rows are linked reimbursement credits, restore the target expenses first
-    restore_expenses_sql = f"""
-        UPDATE `{dev_tbl}` E
-        SET
-            debit = COALESCE(E.original_debit, E.debit),
-            original_debit = NULL,
-            reimbursement = NULL
-        WHERE E.transaction_id IN (
-            SELECT reimbursement.to_transaction_id
-            FROM (
-                SELECT reimbursement
-                FROM `{dev_tbl}`
-                ORDER BY date DESC, transaction_number DESC
-                LIMIT {n}
-            )
-            WHERE reimbursement.to_transaction_id IS NOT NULL
-        )
-    """
-    client.query(restore_expenses_sql).result()
-
-    # 2. Replace dev table excluding the most recent `n` rows
-    delete_sql = f"""
-        CREATE OR REPLACE TABLE `{dev_tbl}` AS
-        SELECT * EXCEPT(_rn)
-        FROM (
-            SELECT
-                *,
-                ROW_NUMBER() OVER (ORDER BY date DESC, transaction_number DESC) AS _rn
-            FROM `{dev_tbl}`
-        )
-        WHERE _rn > {n}
-    """
-    client.query(delete_sql).result()
-
-    return n
+    return db_client.rewind_dev_sandbox_transactions(count=count)
 
 
 

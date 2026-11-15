@@ -201,18 +201,18 @@ def init_page(page_title_suffix=None):
     # 1. Sync environment from session state
     current_env = config.sync_environment()
 
-    # 2. Sidebar Environment Controls
+    # 2. Sidebar Environment & Cloud Backup Controls
     with st.sidebar:
         st.divider()
         env_options = ["dev", "prod"]
-        env_labels = {"dev": "🟢 Dev (`finoob.dev`)", "prod": "🔴 Production"}
+        env_labels = {"dev": "🟢 Dev (`finoob_dev.duckdb`)", "prod": "🔴 Production"}
         selected_env = st.radio(
             "Environment",
             options=env_options,
             index=env_options.index(current_env),
             format_func=lambda e: env_labels.get(e, e),
             horizontal=True,
-            help="Switch between the isolated `finoob.dev` sandbox dataset and live production tables.",
+            help="Switch between the isolated `finoob_dev.duckdb` sandbox and live `finoob.duckdb` production database.",
         )
         if selected_env != current_env:
             config.set_environment(selected_env)
@@ -230,20 +230,54 @@ def init_page(page_title_suffix=None):
 
         if config.ENV == "dev":
             if st.button(
-                "🔄 Sync Dev from Prod",
+                "🔄 Reset Dev from Prod",
                 use_container_width=True,
-                help="Zero-copy clones all 6 production tables into `finoob.dev.*` so your sandbox matches production.",
+                help="Copies `finoob.duckdb` into `finoob_dev.duckdb` in ~2 ms so your sandbox matches production.",
             ):
                 from backend.infrastructure import db_client
-                with st.spinner("Cloning prod tables into `finoob.dev.*`..."):
-                    ok, msg = db_client.sync_dev_sandbox_from_prod()
-                    st.cache_data.clear()
-                    st.session_state.pop("dashboard_analytics_bundle", None)
+                ok, msg = db_client.sync_dev_sandbox_from_prod()
+                st.cache_data.clear()
+                st.session_state.pop("dashboard_analytics_bundle", None)
                 if ok:
                     st.toast(f"✅ {msg}", icon="🎉")
                     st.rerun()
                 else:
                     st.sidebar.error(f"Failed to sync dev sandbox: {msg}")
+
+        from backend.infrastructure import db_client
+        sync_info = db_client.get_cloud_sync_status()
+        with st.expander("☁️ Cloud Backup (GCS)", expanded=False):
+            if sync_info.get("status") == "ok":
+                st.caption(
+                    f"✅ **Last Synced:** {sync_info.get('last_backup_utc', 'N/A')}\n\n"
+                    f"Trigger: `{sync_info.get('reason', 'auto')}`"
+                )
+            elif sync_info.get("status") == "error":
+                st.caption(f"⚠️ **Last Backup Error:** {sync_info.get('error')}")
+            else:
+                st.caption("Automatic GCS backup runs on every Production save.")
+
+            b_col1, b_col2 = st.columns(2)
+            with b_col1:
+                if st.button("☁️ Backup", use_container_width=True, help="Upload `finoob.duckdb` to Google Cloud Storage now."):
+                    with st.spinner("Uploading to GCS..."):
+                        ok, msg = db_client.backup_prod_db_to_gcs(reason="manual_prod", background=False)
+                    if ok:
+                        st.toast(f"☁️ {msg}", icon="✅")
+                        st.rerun()
+                    else:
+                        st.error(msg)
+            with b_col2:
+                if st.button("📥 Pull", use_container_width=True, help="Download latest `finoob_latest.duckdb` from Google Cloud Storage."):
+                    with st.spinner("Downloading from GCS..."):
+                        ok, msg = db_client.restore_prod_db_from_gcs(also_reset_dev=True)
+                        st.cache_data.clear()
+                        st.session_state.pop("dashboard_analytics_bundle", None)
+                    if ok:
+                        st.toast(f"📥 {msg}", icon="✅")
+                        st.rerun()
+                    else:
+                        st.error(msg)
 
     # 3. Visual Header
     display_title(config.ENV)

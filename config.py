@@ -14,9 +14,14 @@ if DEFAULT_ENV not in ["dev", "prod"]:
     st.stop()
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+DUCKDB_PROD_PATH = os.path.join(DATA_DIR, "finoob.duckdb")
+DUCKDB_DEV_PATH = os.path.join(DATA_DIR, "finoob_dev.duckdb")
+CLOUD_SYNC_STATUS_PATH = os.path.join(DATA_DIR, "cloud_sync_status.json")
 
-# --- BigQuery Configuration ---
-BQ_PROJECT_ID = st.secrets["gcp_service_account"]["project_id"]
+# --- Database & Cloud Backup Configuration ---
+BQ_PROJECT_ID = st.secrets.get("gcp_service_account", {}).get("project_id", "finoob")
+GCS_BACKUP_BUCKET = st.secrets.get("bigquery", {}).get("gcs_backup_bucket", "finoob_backup")
 DEV_DATASET_ID = "dev"
 
 # Production vs. Dev Sandbox Table IDs (all dev sandbox tables live in `finoob.dev.*`)
@@ -82,6 +87,10 @@ def sync_environment():
 
 def get_table_id():
     return TRANSACTIONS_DEV_TABLE_ID if ENV == "dev" else TRANSACTIONS_PROD_TABLE_ID
+
+
+def get_duckdb_path():
+    return DUCKDB_DEV_PATH if ENV == "dev" else DUCKDB_PROD_PATH
 
 
 # Initialize module-level variables on import
