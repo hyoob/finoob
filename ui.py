@@ -246,21 +246,21 @@ def init_page(page_title_suffix=None):
 
         from backend.infrastructure import db_client
         sync_info = db_client.get_cloud_sync_status()
-        with st.expander("☁️ Cloud Backup (GCS)", expanded=False):
+        with st.expander("☁️ Cloud Sync (GCS + BQ)", expanded=False):
             if sync_info.get("status") == "ok":
                 st.caption(
                     f"✅ **Last Synced:** {sync_info.get('last_backup_utc', 'N/A')}\n\n"
                     f"Trigger: `{sync_info.get('reason', 'auto')}`"
                 )
             elif sync_info.get("status") == "error":
-                st.caption(f"⚠️ **Last Backup Error:** {sync_info.get('error')}")
+                st.caption(f"⚠️ **Last Sync Error:** {sync_info.get('error')}")
             else:
-                st.caption("Automatic GCS backup runs on every Production save.")
+                st.caption("Automatic GCS backup & BigQuery mirror runs on every Production save.")
 
             b_col1, b_col2 = st.columns(2)
             with b_col1:
-                if st.button("☁️ Backup", use_container_width=True, help="Upload `finoob.duckdb` to Google Cloud Storage now."):
-                    with st.spinner("Uploading to GCS..."):
+                if st.button("☁️ Sync", use_container_width=True, help="Upload `finoob.duckdb` to GCS and mirror all tables to BigQuery now."):
+                    with st.spinner("Syncing to GCS & BigQuery..."):
                         ok, msg = db_client.backup_prod_db_to_gcs(reason="manual_prod", background=False)
                     if ok:
                         st.toast(f"☁️ {msg}", icon="✅")

@@ -14,6 +14,9 @@ pg = st.navigation(
             st.Page("pages/import_sync.py", title="Import & Sync", icon="📥", url_path="import"),
             st.Page("pages/rules_and_backfill.py", title="Rules & Backfill", icon="🏷️", url_path="rules-backfill"),
         ],
+        "🛠️ Tools": [
+            st.Page("pages/sql_explorer.py", title="SQL Explorer", icon="🔍", url_path="sql-explorer"),
+        ],
     }
 )
 

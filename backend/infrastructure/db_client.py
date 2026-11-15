@@ -83,11 +83,41 @@ def get_cloud_sync_status() -> dict:
     return {}
 
 
+ALL_BQ_MIRROR_TABLES = [
+    "accounts.dim_accounts",
+    "categories.dim_categories",
+    "bank_transactions.transactions",
+    "assets.dim_loans",
+    "assets.dim_property_assets",
+    "liabilities.dim_mortgage_terms",
+    "reporting.table_net_worth",
+]
+
+REASON_TO_BQ_TABLES = {
+    "insert_transactions": ["bank_transactions.transactions", "reporting.table_net_worth"],
+    "update_transactions": ["bank_transactions.transactions", "reporting.table_net_worth"],
+    "link_reimbursement": ["bank_transactions.transactions"],
+    "save_dim_accounts": ["accounts.dim_accounts", "reporting.table_net_worth"],
+    "link_open_banking": ["accounts.dim_accounts"],
+    "save_dim_categories": ["categories.dim_categories"],
+    "save_dim_loans": ["assets.dim_loans", "reporting.table_net_worth"],
+    "save_dim_property_assets": ["assets.dim_property_assets", "reporting.table_net_worth"],
+    "save_mortgage_updates": ["liabilities.dim_mortgage_terms", "reporting.table_net_worth"],
+    "refresh_net_worth": ["reporting.table_net_worth"],
+    "save_stocks": ["reporting.table_net_worth"],
+    "save_pension": ["reporting.table_net_worth"],
+    "sync_stocks_gsheet": ["reporting.table_net_worth"],
+    "sync_pension_gsheet": ["reporting.table_net_worth"],
+}
+
+
 def _perform_gcs_backup_sync(reason: str = "write") -> tuple[bool, str]:
     """
-    Creates a consistent file snapshot of `finoob.duckdb` and uploads it to:
+    Creates a consistent file snapshot of `finoob.duckdb`, uploads it to Google Cloud Storage:
       - gs://<bucket>/duckdb/finoob_latest.duckdb
       - gs://<bucket>/duckdb/archive/finoob_YYYY-MM-DD.duckdb
+    and mirrors the updated table(s) to Google BigQuery via Parquet so the GCP BigQuery Console
+    always stays in sync with local DuckDB.
     """
     if not os.path.exists(config.DUCKDB_PROD_PATH):
         return False, "Production DuckDB file does not exist yet."
@@ -110,8 +140,38 @@ def _perform_gcs_backup_sync(reason: str = "write") -> tuple[bool, str]:
             archive_blob = bucket.blob(f"duckdb/archive/finoob_{today_str}.duckdb")
             archive_blob.upload_from_filename(tmp_path, timeout=60)
 
-            _write_sync_status("ok", reason=reason, size_bytes=size_bytes)
-            return True, f"Backed up to gs://{config.GCS_BACKUP_BUCKET}/duckdb/finoob_latest.duckdb ({size_bytes / (1024*1024):.2f} MB)"
+            # Mirror updated tables to BigQuery so GCP Console queries remain live
+            bq_tables = REASON_TO_BQ_TABLES.get(reason, ALL_BQ_MIRROR_TABLES)
+            bq = get_bq_client()
+            snap_con = duckdb.connect(tmp_path, read_only=True)
+            try:
+                for tbl in bq_tables:
+                    pq_fd, pq_path = tempfile.mkstemp(suffix=".parquet", prefix="finoob_bq_")
+                    os.close(pq_fd)
+                    try:
+                        snap_con.execute(f"COPY {tbl} TO '{pq_path}' (FORMAT PARQUET)")
+                        job_cfg = bigquery.LoadJobConfig(
+                            source_format=bigquery.SourceFormat.PARQUET,
+                            write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+                        )
+                        with open(pq_path, "rb") as f:
+                            bq.load_table_from_file(
+                                f, f"{config.BQ_PROJECT_ID}.{tbl}", job_config=job_cfg
+                            ).result()
+                    finally:
+                        if os.path.exists(pq_path):
+                            try:
+                                os.remove(pq_path)
+                            except Exception:
+                                pass
+            finally:
+                snap_con.close()
+
+            _write_sync_status("ok", reason=f"{reason} (GCS + {len(bq_tables)} BQ tbls)", size_bytes=size_bytes)
+            return (
+                True,
+                f"Synced to GCS & mirrored {len(bq_tables)} table(s) to BigQuery ({size_bytes / (1024*1024):.2f} MB)",
+            )
         except Exception as e:
             _write_sync_status("error", reason=reason, error=str(e))
             return False, str(e)

@@ -24,9 +24,11 @@ It combines automated multi-bank transaction ingestion, rule-based categorizatio
   * **Stock Grants & Vesting**: Tracks RSU vesting schedules against live market prices and EUR/USD exchange rates (`yfinance`).
   * **Property, Pension & Loan Receivables**: Tracks real estate valuations, monthly pension unit growth, and amortized personal loan repayments.
   * **Daily-Interest Mortgage Simulator**: Combines actual historical mortgage payments from bank transactions with planned future lump sums, rate changes, and overpayments via a BigQuery JS UDF (`liabilities.calculate_amortization`).
-* **🧪 Instant Dev Sandbox & Cloud Backup**
+* **🔍 Built-In SQL Explorer (`pages/sql_explorer.py`)**
+  * Run ad-hoc DuckDB SQL queries (~2–10 ms) directly in the browser with a live schema/column catalog, 1-click preset query templates, read-only guardrails, and CSV export.
+* **🧪 Instant Dev Sandbox & Dual Cloud Sync (GCS + BigQuery)**
   * Switch between **PROD** (`data/finoob.duckdb`) and **DEV** (`data/finoob_dev.duckdb`) at runtime from the sidebar—or reset the dev sandbox from production in ~5 ms.
-  * Every production save automatically backs up `finoob.duckdb` in the background to **Google Cloud Storage** (`duckdb/finoob_latest.duckdb` + daily dated archives `duckdb/archive/finoob_YYYY-MM-DD.duckdb`).
+  * Every production save automatically backs up `finoob.duckdb` in the background to **Google Cloud Storage** (`duckdb/finoob_latest.duckdb` + daily dated archives) **and** mirrors updated tables to **Google BigQuery** via Parquet so the GCP BigQuery Console stays in sync.
 
 ---
 
@@ -44,7 +46,8 @@ finoob/
 │   ├── rules_and_backfill.py           # 🏷️ Rule Manager, Manual Triage, Backfill & Reimbursements
 │   ├── accounts.py                     # 🏦 Account Management & 3-Way Balance Health Audit
 │   ├── assets_and_loans.py             # 🏠 Stocks, Property Valuations & Loan Receivables
-│   └── liabilities.py                  # 📉 Mortgage Terms, Simulator & Amortization Schedule
+│   ├── liabilities.py                  # 📉 Mortgage Terms, Simulator & Amortization Schedule
+│   └── sql_explorer.py                 # 🔍 Built-in DuckDB SQL Query Explorer & Schema Browser
 ├── backend/                            # Layered backend architecture
 │   ├── domain/                         # Pure business logic & validation (no I/O)
 │   │   ├── account_logic.py
