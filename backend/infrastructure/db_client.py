@@ -178,9 +178,12 @@ def _perform_gcs_backup_sync(reason: str = "write", env: str = None) -> tuple[bo
                     os.close(pq_fd)
                     try:
                         snap_con.execute(f"COPY {tbl} TO '{pq_path}' (FORMAT PARQUET)")
+                        pq_opts = bigquery.ParquetOptions()
+                        pq_opts.enable_list_inference = True
                         job_cfg = bigquery.LoadJobConfig(
                             source_format=bigquery.SourceFormat.PARQUET,
                             write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+                            parquet_options=pq_opts,
                         )
                         if target_env == "dev":
                             short_tbl = tbl.split(".", 1)[1] if "." in tbl else tbl
